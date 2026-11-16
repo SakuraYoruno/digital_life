@@ -196,8 +196,11 @@ def test_io_appends_sticker(tmp_path):
 
     assert len(client.sent) == 2
     assert client.sent[0][2][0]["type"] == "text"
-    assert client.sent[1][2][0]["type"] == "image"
-    assert client.sent[1][2][0]["data"]["file"].startswith("file:///")
+    image = client.sent[1][2][0]
+    assert image["type"] == "image"
+    assert image["data"]["sub_type"] == 1        # 1 = QQ 表情包，不是普通图片
+    assert image["data"]["summary"] == "[动画表情]"
+    assert image["data"]["file"].startswith("file:///")
 
 
 def test_io_skips_sticker_when_unlucky(tmp_path):

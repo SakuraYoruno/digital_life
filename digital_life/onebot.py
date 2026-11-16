@@ -556,7 +556,18 @@ class OneBotIO:
         if sticker is None:
             return
         await asyncio.sleep(max(0.0, self.config.sticker_delay))
-        segments = [{"type": "image", "data": {"file": sticker.file_url}}]
+        # sub_type=1 + summary=[动画表情] 才会被 QQ 当成"表情包"存下来；
+        # 只发 image 的话是普通图片（大图、带白底），这是两种不同的消息类型。
+        segments = [
+            {
+                "type": "image",
+                "data": {
+                    "file": sticker.file_url,
+                    "sub_type": 1,
+                    "summary": "[动画表情]",
+                },
+            }
+        ]
         try:
             if group_id is not None:
                 await self.client.send_group(group_id, segments)
