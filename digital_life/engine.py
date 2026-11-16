@@ -39,7 +39,7 @@ from .personas import (
     user_model_text,
 )
 from .persistence import ObsidianReflector, StateStore
-from .persona_evolution import nightly_reflect
+from .persona_evolution import nightly_reflect, update_user_profile
 from .proactive import (
     decay_affinity,
     gen_proactive,
@@ -70,6 +70,8 @@ class EngineConfig:
     vault_path: str | None = None
     log: Callable[[str], None] | None = None
     group_slang_every: int = 50
+    # 会话结束更新画像的门槛：至少说了几条才值得花一次小模型调用
+    profile_min_turns: int = 3
 
 
 @dataclass
@@ -171,6 +173,9 @@ class DigitalLife:
         self._wm: dict[str, WorkingMemory] = {}
         self._uid_locks: dict[str, asyncio.Lock] = {}
         self._group_msgs: dict[str, deque[str]] = {}
+        # 群聊共享时间线：最近若干条（谁说的、说了什么、什么时候）。
+        # 工作记忆是按 uid 分的，缺了这块，她接不住"别人刚才说的话"。
+        self._group_turns: dict[str, deque[tuple[str, str, float]]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._support_until: dict[str, tuple[float, str]] = {}
         self._last_tick = self.clock()
@@ -247,6 +252,20 @@ class DigitalLife:
         for wm in list(self._wm.values()):
             await wm.flush()
 
+    def _group_context(
+        self, group_id: str, *, now: float, window: float = 1800.0, limit: int = 8
+    ) -> str:
+        """群里刚才在聊什么——不含当前这一条（它已经作为【对方刚说】出现了）。"""
+        timeline = self._group_turns.get(group_id)
+        if not timeline:
+            return ""
+        rows = [(who, text) for who, text, ts in timeline if now - ts <= window]
+        if len(rows) > 1:
+            rows = rows[:-1]
+        if not rows:
+            return ""
+        return "\n".join(f"{who}：{text}" for who, text in rows[-limit:])
+
     def _active_support(self, uid: str, now: float) -> str:
         item = self._support_until.get(uid)
         if not item:
@@ -311,6 +330,11 @@ class DigitalLife:
                     group_id, deque(maxlen=max(10, self.config.group_slang_every))
                 )
                 bucket.append(percept.clean_text)
+                # 共享时间线：不管她这次说没说话，都先记下来。
+                timeline = self._group_turns.setdefault(group_id, deque(maxlen=60))
+                timeline.append(
+                    ((speaker or uid), percept.clean_text[:80], now)
+                )
                 if len(bucket) >= self.config.group_slang_every:
                     batch = list(bucket)
                     bucket.clear()
@@ -400,6 +424,9 @@ class DigitalLife:
                 mood=mood,
                 summary=summary,
                 group_id=group_id,
+                group_context=(
+                    self._group_context(group_id, now=now) if group_id else ""
+                ),
                 knobs=knobs,
                 small_llm=self.small,
                 now=now,
@@ -583,9 +610,21 @@ class DigitalLife:
                 rel.proactive_awaiting_reply = False
             self.stats.session_endings += 1
             self.stats.affinity_history.append((uid, rel.affinity, now))
+            enough_turns = int(snapshot.get("n_turns", 0)) >= self.config.profile_min_turns
 
         self.save_state(now)
+
+        # 画像在这里更新，而不是只在夜里：夜里一次要跑所有 uid，白天聊完随手就更新，
+        # 下次开口就能用上「他讨厌被叫全名」这类结论。只对聊够几条的人做，省调用。
+        if enough_turns:
+            self._spawn(self._refresh_profile(uid, now))
         return snapshot
+
+    async def _refresh_profile(self, uid: str, now: float) -> None:
+        try:
+            await update_user_profile(self.small, self.mem, uid, self.st.rel(uid), now=now)
+        except Exception as exc:  # noqa: BLE001 - 画像失败不能影响主流程
+            self.stats.errors.append(f"user_profile: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------
     # 夜间反思 / 持久化 / 运行

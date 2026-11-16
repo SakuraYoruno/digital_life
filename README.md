@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 141 个单元/集成测试
+├── tests/                    # 146 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -438,6 +438,11 @@ python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --pr
 - **群聊**：`mention` 只接"被 @ "或"以 `/` 开头"的消息，回复的第一条会 @ 回对方；`ambient` 额外允许她自己插话，规则见 §8.6。
 - **一条回复几口气**：模型用换行断开的句子**按气泡逐条发**（间隔 `bubble_interval` 秒），像真人连发；A 维旋钮要求时再按句末标点继续拆。`--single-message` 则并成一条、换行折成逗号。
 - **记忆按 QQ 号隔离**：`uid` 就是 QQ 号；群里说话同样记在这个人名下，`group_id` 只参与群语境。
+- **群聊共享时间线**：每群保留最近 60 条（谁说的、说了什么、什么时候），回复时取最近 8 条做【群里刚才】。
+  所以 A 说一句、B 接话时她也知道 A 说了什么——工作记忆是按 uid 分的，没有这块她接不住别人的话头。
+- **她认人**：群里第一次见到某人，就把 QQ 显示名记成「她对你的称呼」，prompt 里写明"这条消息来自「小虾米」"。
+- **画像在会话结束时更新**：聊满 3 句（`profile_min_turns`）才触发一次小模型提炼（称呼/雷区/作息），
+  不再只等凌晨那一次——下次开口就能用上。
 - **出站不串台**：私聊回复落到私聊、群回复落到同一个群，靠 `contextvars` 绑定当前这一轮，并发用户互不影响。
 - **主动发言**：慢循环里"她"想找人说话时走私聊；非 QQ 号的 uid（例如 chat 里的 `owner`）会被跳过并记日志，不会误发。
 - **断线**：1s→30s 指数退避自动重连；重连后 NapCat 重推的旧消息按 `message_id` 去重。
@@ -545,7 +550,7 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 ```bash
 python -m pytest
-# 141 passed
+# 146 passed
 ```
 
 覆盖：

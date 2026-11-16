@@ -23,6 +23,7 @@ BUDGET = {
     "working": 3000,
     "summary": 300,
     "memory": 800,
+    "group": 220,
     "knowledge": 500,
     "user": 500,
 }
@@ -33,6 +34,7 @@ _HEADERS = {
     "working": "【近期对话】",
     "summary": "【会话摘要】",
     "memory": "【相关记忆】",
+    "group": "【群里刚才】",
     "knowledge": "【资料】",
     "user": "【对方刚说】",
     "system": "【系统】",
@@ -57,8 +59,9 @@ _ORDER = {
     "working": 1,
     "summary": 2,
     "memory": 3,
-    "knowledge": 4,
-    "user": 5,
+    "group": 4,
+    "knowledge": 5,
+    "user": 6,
 }
 
 
@@ -99,6 +102,7 @@ class ContextAssembler:
         mood: str = "",
         summary: str = "",
         group_id: str | None = None,
+        group_context: str = "",
         knobs: dict[str, Any] | None = None,
         small_llm: Any = None,
         now: float | None = None,
@@ -133,18 +137,23 @@ class ContextAssembler:
             except Exception:
                 knowledge = ""
         knowledge = truncate_to_tokens(knowledge, self.budget["knowledge"])
+        group_text = truncate_to_tokens(
+            group_context or "", self.budget.get("group", 220)
+        )
 
         parts = [
             ("working", working),
             ("summary", summary_text),
             ("memory", memory_text),
+            ("group", group_text),
             ("knowledge", knowledge),
             ("user", user_msg),
         ]
         text = assemble_in_natural_order(parts)
         total = estimate_tokens(sys_prompt) + estimate_tokens(text)
 
-        # 硬上限保护：先丢知识，再丢召回，再削工作记忆；system 与 user 永不动。
+        # 硬上限保护：先丢资料，再丢群聊回声，再丢召回，再削工作记忆；
+        # system 与 user 永不动。
         if total > self.max_tokens:
             parts = [(name, content) for name, content in parts if name != "knowledge"]
             text = assemble_in_natural_order(parts)
@@ -153,7 +162,15 @@ class ContextAssembler:
             parts = [
                 (name, content)
                 for name, content in parts
-                if name not in ("knowledge", "memory")
+                if name not in ("knowledge", "group")
+            ]
+            text = assemble_in_natural_order(parts)
+            total = estimate_tokens(sys_prompt) + estimate_tokens(text)
+        if total > self.max_tokens:
+            parts = [
+                (name, content)
+                for name, content in parts
+                if name not in ("knowledge", "group", "memory")
             ]
             text = assemble_in_natural_order(parts)
             total = estimate_tokens(sys_prompt) + estimate_tokens(text)
