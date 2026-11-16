@@ -23,6 +23,7 @@ import asyncio
 import contextvars
 import json
 import os
+import random
 import re
 import time
 import uuid
@@ -56,8 +57,12 @@ class OneBotConfig:
     private_mode: str = "allowlist"
     private_allow: tuple[str, ...] = ()
     # group: off 不接群 / mention 被 @ 或带前缀才接 / open 群里什么都接
+    #        ambient 偶尔自己插话（其余消息"只听不说"，本地小模型记一笔）
     group_mode: str = "mention"
     group_allow: tuple[str, ...] = ()
+    group_reply_prob: float = 0.06
+    group_cooldown: float = 180.0
+    group_names: tuple[str, ...] = ("夏弥", "小龙女", "虾米")
     command_prefix: str = "/"
     at_reply: bool = True
     bubble_interval: float = 0.6
@@ -93,6 +98,9 @@ def config_from_env(env: dict[str, str] | None = None) -> OneBotConfig:
         private_allow=_split_csv(e.get("DIGITAL_LIFE_QQ_PRIVATE_ALLOW")),
         group_mode=(e.get("DIGITAL_LIFE_QQ_GROUP_MODE") or "mention").lower(),
         group_allow=_split_csv(e.get("DIGITAL_LIFE_QQ_GROUP_ALLOW")),
+        group_reply_prob=float(e.get("DIGITAL_LIFE_QQ_GROUP_PROB") or 0.06),
+        group_cooldown=float(e.get("DIGITAL_LIFE_QQ_GROUP_COOLDOWN") or 180.0),
+        group_names=_split_csv(e.get("DIGITAL_LIFE_QQ_GROUP_NAMES")) or ("夏弥", "小龙女", "虾米"),
         command_prefix=e.get("DIGITAL_LIFE_QQ_PREFIX") or "/",
         at_reply=(e.get("DIGITAL_LIFE_QQ_AT_REPLY") or "1") not in ("0", "false", "False"),
         bubble_interval=float(e.get("DIGITAL_LIFE_QQ_BUBBLE_INTERVAL") or 0.6),
@@ -506,15 +514,19 @@ class OneBotBridge:
         config: OneBotConfig | None = None,
         *,
         log: Callable[[str], None] | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self.engine = engine
         self.config = config or config_from_env()
         self.log = log or (lambda line: print(line, flush=True))
+        self.rng = rng or random.Random()
         self._sem = asyncio.Semaphore(max(1, self.config.concurrency))
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._last_group_reply: dict[str, float] = {}
 
     # -- 过滤 ---------------------------------------------------------
     def should_reply(self, message: IncomingMessage) -> bool:
+        """@ 我 / 带前缀 / open 模式：这些情况一定要接。"""
         if message.is_group:
             if not self.config.allow_group(str(message.group_id)):
                 return False
@@ -528,6 +540,36 @@ class OneBotBridge:
             return False
         return True
 
+    # -- 群聊主动接话 ---------------------------------------------------
+    def group_chance(self, text: str) -> float:
+        """ambient 模式下这条群消息被她接住的概率。
+
+        四个变量：基础概率、有没有叫她名字、是不是疑问句、她此刻的激活度与好奇心。
+        概率是刻意的——群里每条都接就成了复读机，不接又成了背景板。
+        """
+        chance = self.config.group_reply_prob
+        if any(name and name in text for name in self.config.group_names):
+            chance = max(chance, 0.45)
+        if "？" in text or "?" in text:
+            chance *= 1.4
+        state = getattr(self.engine, "st", None)
+        if state is not None:
+            arousal = float(getattr(state, "A", 0.3))
+            curiosity = float(getattr(state, "drive", {}).get("curiosity", 0.5))
+            chance *= 0.6 + 0.8 * arousal
+            chance *= 0.7 + 0.6 * curiosity
+        return max(0.0, min(0.9, chance))
+
+    def should_chime_in(self, message: IncomingMessage, *, now: float | None = None) -> bool:
+        """ambient 模式下的额外判断：冷却 + 掷骰子。"""
+        if self.config.group_mode != "ambient" or message.at_me:
+            return False
+        group_id = str(message.group_id)
+        now = time.time() if now is None else now
+        if now - self._last_group_reply.get(group_id, 0.0) < self.config.group_cooldown:
+            return False
+        return self.rng.random() < self.group_chance(message.text)
+
     # -- 调度 ---------------------------------------------------------
     def dispatch(self, message: IncomingMessage) -> None:
         """客户端回调：不 await，交给后台任务，慢生成不挡下一条消息。"""
@@ -539,16 +581,36 @@ class OneBotBridge:
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
-    async def handle(self, message: IncomingMessage) -> None:
-        if not self.should_reply(message):
-            return
+    async def _observe(self, message: IncomingMessage, text: str) -> None:
+        """只听不说：让她记住群里聊了什么，但不生成、不发送。"""
+        async with self._sem:
+            try:
+                await self.engine.on_message(
+                    message.user_id, text, message.group_id, speak=False
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"[onebot] 旁听失败：{type(exc).__name__}: {exc}")
 
+    async def handle(self, message: IncomingMessage) -> None:
         text = message.text
         prefix = self.config.command_prefix
         if message.is_group and not message.at_me and prefix and text.startswith(prefix):
             text = text[len(prefix):].lstrip()
             if not text:
                 return
+
+        if message.is_group:
+            if not self.config.allow_group(str(message.group_id)):
+                return
+            if not self.should_reply(message):
+                if not self.should_chime_in(message):
+                    if self.config.group_mode == "ambient":
+                        await self._observe(message, text)
+                    return
+                if self.config.group_mode == "ambient":
+                    self._last_group_reply[str(message.group_id)] = time.time()
+        elif not self.config.allow_private(message.user_id):
+            return
 
         who = message.sender_name or message.user_id
         where = f"群{message.group_id}" if message.is_group else "私聊"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 
 from digital_life.engine import DigitalLife, EngineConfig
@@ -246,7 +247,11 @@ def _make_engine(io, *, state=None) -> DigitalLife:
 
 
 async def _run_roundtrip(
-    event: dict, config: OneBotConfig, *, expect_reply: bool = True
+    event: dict,
+    config: OneBotConfig,
+    *,
+    expect_reply: bool = True,
+    rng: random.Random | None = None,
 ) -> tuple[list[dict], DigitalLife]:
     from websockets.asyncio.server import serve
 
@@ -279,7 +284,7 @@ async def _run_roundtrip(
         client = OneBotClient(config, log=lambda line: None)
         io = OneBotIO(client, config)
         engine = _make_engine(io)
-        bridge = OneBotBridge(engine, config, log=lambda line: None)
+        bridge = OneBotBridge(engine, config, log=lambda line: None, rng=rng)
         client.on_message = bridge.dispatch
 
         task = asyncio.create_task(client.run())
@@ -416,5 +421,92 @@ def test_target_contextvar_is_isolated():
         assert _target.get() == ("group", "555")
         _target.reset(token)
         assert _target.get() is None
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# 群聊主动接话（ambient）
+# ---------------------------------------------------------------------------
+
+
+def test_group_chance_reacts_to_her_name():
+    bridge = _bridge(group_mode="ambient", group_reply_prob=0.05)
+    plain = bridge.group_chance("今天好热")
+    named = bridge.group_chance("夏弥你觉得呢")
+    assert named > plain
+    assert named >= 0.45  # 被点名至少抬到 0.45（无状态时不再乘以情绪系数）
+
+    # 疑问句比陈述句更容易被接
+    assert bridge.group_chance("有人吗？") > plain
+
+
+def test_ambient_cooldown_blocks_second_chime_in():
+    bridge = OneBotBridge(
+        _DummyEngine(),
+        OneBotConfig(group_mode="ambient", group_reply_prob=0.9, group_cooldown=300),
+        log=lambda line: None,
+        rng=random.Random(1),
+    )
+    message = parse_event(_group_event("今天吃什么"), "999")
+    assert message is not None
+
+    assert bridge.should_chime_in(message, now=1000.0) is True
+    bridge._last_group_reply["555"] = 1000.0  # 刚接过话
+    assert bridge.should_chime_in(message, now=1100.0) is False  # 冷却中
+    assert bridge.should_chime_in(message, now=1400.0) is True  # 冷却过了
+
+
+def test_mention_mode_never_chimes_in():
+    bridge = _bridge(group_mode="mention", group_reply_prob=0.9)
+    message = parse_event(_group_event("今天吃什么"), "999")
+    assert message is not None
+    assert bridge.should_chime_in(message) is False
+
+
+def test_engine_speak_false_only_listens():
+    from digital_life.io import CollectingIO
+
+    async def run():
+        io = CollectingIO(clock=time.time)
+        engine = _make_engine(io)
+        result = await engine.on_message("222", "群里在聊火锅", "555", speak=False)
+        assert result.reply == ""
+        assert io.messages == []            # 一个字都没发
+        assert engine.stats.messages == 0   # 不算"回过话"
+        assert engine.st.rel("222").last_interact > 0  # 但她听见了
+        await engine.drain()
+        engine.mem.close()
+
+    asyncio.run(run())
+
+
+def test_e2e_ambient_group_observes_without_reply():
+    config = OneBotConfig(
+        self_id="999", group_mode="ambient", group_reply_prob=0.0, group_cooldown=0
+    )
+
+    async def run():
+        received, engine = await _run_roundtrip(
+            _group_event("今天好热啊"), config, expect_reply=False, rng=random.Random(1)
+        )
+        assert received == [], "概率 0 还是说话了"
+        assert engine.stats.messages == 0
+
+    asyncio.run(run())
+
+
+def test_e2e_ambient_group_can_chime_in():
+    config = OneBotConfig(
+        self_id="999", group_mode="ambient", group_reply_prob=0.9, group_cooldown=0
+    )
+
+    async def run():
+        received, _engine = await _run_roundtrip(
+            _group_event("今天好热啊"), config, rng=random.Random(1)
+        )
+        assert received, "该插话的时候没插"
+        assert received[0]["action"] == "send_group_msg"
+        assert str(received[0]["params"]["message"][0]["data"]["qq"]) == "222"
 
     asyncio.run(run())

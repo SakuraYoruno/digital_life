@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 109 个单元/集成测试
+├── tests/                    # 115 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -400,8 +400,11 @@ python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --pr
 | `--self-id` | `DIGITAL_LIFE_QQ_SELF_ID` | 等 NapCat 上报 | 机器人 QQ 号，用来判断"有没有 @ 我" |
 | `--private-mode` | `DIGITAL_LIFE_QQ_PRIVATE_MODE` | `allowlist` | `off` / `allowlist` / `open` |
 | `--private-allow` | `DIGITAL_LIFE_QQ_PRIVATE_ALLOW` | 空 | 逗号分隔的 QQ 号 |
-| `--group-mode` | `DIGITAL_LIFE_QQ_GROUP_MODE` | `mention` | `off` / `mention` / `open` |
+| `--group-mode` | `DIGITAL_LIFE_QQ_GROUP_MODE` | `mention` | `off` / `mention` / `open` / `ambient` |
 | `--group-allow` | `DIGITAL_LIFE_QQ_GROUP_ALLOW` | 空 | 逗号分隔的群号；空=所有群 |
+| `--group-prob` | `DIGITAL_LIFE_QQ_GROUP_PROB` | `0.06` | `ambient` 下每条群消息被她接住的概率基数 |
+| `--group-cooldown` | `DIGITAL_LIFE_QQ_GROUP_COOLDOWN` | `180` | `ambient` 下两次接话的最小间隔（秒） |
+| — | `DIGITAL_LIFE_QQ_GROUP_NAMES` | `夏弥,小龙女,虾米` | 群里出现这些词就大幅提高接话概率 |
 | — | `DIGITAL_LIFE_QQ_PREFIX` | `/` | 群里不带 @ 也能触发的前缀，置空则只认 @ |
 | — | `DIGITAL_LIFE_QQ_BUBBLE_INTERVAL` | `0.6` | 多条气泡之间的间隔秒数 |
 | `--single-message` | `DIGITAL_LIFE_QQ_SPLIT` | `1` | 她一句话分两口气时按两条气泡发；`0` 或 `--single-message` 并成一条 |
@@ -410,7 +413,7 @@ python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --pr
 ### 8.3 行为约定
 
 - **私聊**：`allowlist` 只接白名单；`open` 谁都接（只建议在自己机器上、别人够不着时用）。
-- **群聊**：`mention` 只接"被 @ "或"以 `/` 开头"的消息，回复的第一条会 @ 回对方。
+- **群聊**：`mention` 只接"被 @ "或"以 `/` 开头"的消息，回复的第一条会 @ 回对方；`ambient` 额外允许她自己插话，规则见 §8.6。
 - **一条回复几口气**：模型用换行断开的句子**按气泡逐条发**（间隔 `bubble_interval` 秒），像真人连发；A 维旋钮要求时再按句末标点继续拆。`--single-message` 则并成一条、换行折成逗号。
 - **记忆按 QQ 号隔离**：`uid` 就是 QQ 号；群里说话同样记在这个人名下，`group_id` 只参与群语境。
 - **出站不串台**：私聊回复落到私聊、群回复落到同一个群，靠 `contextvars` 绑定当前这一轮，并发用户互不影响。
@@ -442,13 +445,39 @@ python -m pytest tests/test_onebot.py     # 内置假 OneBot 服务端，跑通"
    现在换成「在吃什么 / 你好笨啊」这类不会撞题的场景。
 2. **只写"有哪些口头禅"没用**，要写"什么时候用"（`voice_rules` 第三条就是「爱反问、爱卖关子」并给了例句方向）。
 
+### 8.6 群聊里她怎么接话（ambient）
+
+`mention` 模式下群里没人 @ 她，她就完全是个背景板。`ambient` 模式是给"她在群里待着"这件事用的：
+
+| 什么消息 | 她怎么做 | 代价 |
+|---|---|---|
+| 被 @、或带 `/` 前缀 | 必接 | 一次大模型 |
+| 没被 @，掷骰子中了 | 主动插一句（会 @ 对方） | 一次大模型 |
+| 没被 @，没中 | **只听不说**：照常感知、判断情绪、记进工作记忆，但不生成、不发送 | 只有本地小模型 |
+
+"只听不说"就是 `on_message(..., speak=False)`：她的情绪会跟着群里的话起伏（`react_to_event` 照跑），
+下次开口时工作记忆里已经有刚才那些话，而不是像刚进群一样一脸茫然。
+这点很关键——否则"偶尔插话"会插得毫无上下文，比不说话更像机器人。
+
+掷骰子的概率由四个量相乘得出（`OneBotBridge.group_chance`）：
+
+```
+基础概率(0.06) × (0.6 + 0.8·A) × (0.7 + 0.6·好奇心)
+   ，被叫到名字时基础概率抬到 0.45，疑问句 ×1.4，最后封顶 0.9
+```
+
+外加每个群独立的冷却：两次接话至少隔 `group_cooldown` 秒（默认 180）。
+这个冷却比概率更重要——群里刷屏时概率再低也会连发，冷却能保证她不会变成复读机。
+
+调参建议：群里人少、聊得慢，把 `--group-prob` 提到 0.15～0.2；群里热闹、怕她烦人，就降到 0.03 并把冷却拉到 600。
+
 ---
 
 ## 9. 测试
 
 ```bash
 python -m pytest
-# 109 passed
+# 115 passed
 ```
 
 覆盖：

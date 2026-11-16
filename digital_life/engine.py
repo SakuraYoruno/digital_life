@@ -283,7 +283,14 @@ class DigitalLife:
         group_id: str | None = None,
         *,
         now: float | None = None,
+        speak: bool = True,
     ) -> MessageResult:
+        """处理一条消息。
+
+        `speak=False` 是"只听不说"：感知、appraisal、情绪状态、工作记忆照常更新，
+        但不调用主模型、不发送。群聊里"她听见了但没搭话"走这条路——代价只有
+        本地小模型，不需要为每条没接的话付一次大模型的钱。
+        """
         uid = str(uid)
         async with self._uid_lock(uid):
             now = self._now(now)
@@ -343,8 +350,23 @@ class DigitalLife:
                 map_mood(self.st)
                 rel.last_interact = now
                 rel.session.observe(appraisal["valence"], appraisal["intensity"])
-                self.stats.messages += 1
                 self.stats.record_state(self.st)
+
+                if not speak:
+                    # 只听不说：把话记进工作记忆，情绪该起反应也起过了，到此为止。
+                    wm.add("user", percept.clean_text, self.st.mood)
+                    self._maybe_save(now)
+                    return MessageResult(
+                        reply="",
+                        raw_reply="",
+                        mood=self.st.mood,
+                        appraisal=appraisal,
+                        knobs={},
+                        ctx_tokens=0,
+                        blocked=False,
+                    )
+
+                self.stats.messages += 1
 
                 if risk:
                     self._support_until[uid] = (now + 3600.0, risk)

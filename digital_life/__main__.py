@@ -326,6 +326,10 @@ async def cmd_im(args: argparse.Namespace) -> int:
         config.group_mode = args.group_mode
     if args.group_allow is not None:
         config.group_allow = _csv(args.group_allow)
+    if args.group_prob is not None:
+        config.group_reply_prob = args.group_prob
+    if args.group_cooldown is not None:
+        config.group_cooldown = args.group_cooldown
     if args.single_message:
         config.split_bubbles = False
 
@@ -450,10 +454,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     im.add_argument("--private-allow", default=None, help="私聊白名单，逗号分隔的 QQ 号")
     im.add_argument(
-        "--group-mode", choices=("off", "mention", "open"), default=None,
-        help="群聊策略：off 不接 / mention 被 @ 或带前缀才接 / open 群里什么都接",
+        "--group-mode", choices=("off", "mention", "open", "ambient"), default=None,
+        help="群聊策略：off 不接 / mention 被 @ 或带前缀才接 / open 什么都接 / ambient 偶尔自己插话",
     )
     im.add_argument("--group-allow", default=None, help="群白名单，逗号分隔的群号，留空=不限制")
+    im.add_argument("--group-prob", type=float, default=None, help="ambient 模式下每条群消息的接话概率")
+    im.add_argument("--group-cooldown", type=float, default=None, help="ambient 模式下两次接话的最小间隔（秒）")
     im.add_argument(
         "--single-message",
         action="store_true",
