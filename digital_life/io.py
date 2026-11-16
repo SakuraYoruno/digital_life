@@ -29,14 +29,23 @@ _PUNCT = "。！？!?…～~"
 def split_bubbles(text: str, knobs: dict[str, Any] | None = None) -> list[str]:
     if not text or not text.strip():
         return []
-    if not knobs or not knobs.get("split_bubbles"):
-        return [text.strip()]
 
-    # 按句末标点切，保留标点；不拆英文缩写（这里只处理中文句末标点，足够）。
-    raw_parts = re.findall(r"[^。！？!?…\n]+[。！？!?…]*", text)
+    # 模型自己用换行断的，就是它想分的气泡——这是它的意图，不该被旋钮吞掉。
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        if len(lines) > 4:
+            lines = lines[:3] + ["".join(lines[3:])]
+        return lines
+
+    line = lines[0] if lines else text.strip()
+    if not knobs or not knobs.get("split_bubbles"):
+        return [line]
+
+    # 旋钮要求拆气泡时，再按句末标点切；不拆英文缩写（这里只处理中文句末标点，足够）。
+    raw_parts = re.findall(r"[^。！？!?…\n]+[。！？!?…]*", line)
     parts = [p.strip() for p in raw_parts if p.strip()]
     if len(parts) <= 1:
-        return [text.strip()]
+        return [line]
     # 太碎的片段并到前一条，避免“哈。”“？”这种单字气泡。
     merged: list[str] = []
     for part in parts:

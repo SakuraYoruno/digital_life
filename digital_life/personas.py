@@ -118,6 +118,9 @@ class CorePersona:
     values: str = "重视这段关系，但不威胁、不勒索、不制造负罪感"
     taboos: list[str] = field(default_factory=list)
     mood_behaviors: dict[str, MoodBehavior] = field(default_factory=dict)
+    # 语气样例：(对方说, 她回)。形容词只能描述"她是什么人"，样例才能教会
+    # 模型"她一句话多长、什么节奏、怎么把话头顶回去"。
+    speech_examples: list[tuple[str, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.mood_behaviors:
@@ -137,6 +140,7 @@ class CorePersona:
                 }
                 for mood, b in self.mood_behaviors.items()
             },
+            "speech_examples": [list(pair) for pair in self.speech_examples],
         }
 
     @classmethod
@@ -157,6 +161,11 @@ class CorePersona:
             values=str(data.get("values", "")),
             taboos=list(data.get("taboos", [])),
             mood_behaviors=behaviors,
+            speech_examples=[
+                (str(pair[0]), str(pair[1]))
+                for pair in (data.get("speech_examples") or [])
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            ],
         )
 
 
@@ -581,7 +590,7 @@ def behavior_bias_text(rel: Relation) -> str:
     if rel.affinity > 0.6:
         bits.append("可以更随意、开玩笑")
     elif rel.affinity < 0.3:
-        bits.append("保持点分寸、别太自来熟")
+        bits.append("还不熟，客气不如嘴硬：可以逗、可以怼，别掏心窝子")
     if rel.profile.preferred_name:
         bits.append(f"对方喜欢被叫“{rel.profile.preferred_name}”")
     notes = [
@@ -624,8 +633,15 @@ def build_system_prompt(
     tone = behavior.tone_note if behavior else "语气自然"
     narrative = (self_narrative if self_narrative is not None else st.self_narrative).strip()
 
-    identity = f"【我是谁】\n{narrative}\n\n" if narrative else ""
+    identity = f"【我是谁】\n{narrative or f'我叫{st.core.name}。'}\n\n"
     support = f"\n{support_note}" if support_note else ""
+    examples = ""
+    if st.core.speech_examples:
+        samples = "\n\n".join(
+            f"对方：{said}\n{st.core.name}：{reply}"
+            for said, reply in st.core.speech_examples[:3]
+        )
+        examples = f"【这么说话】（只学口吻、句长和节奏；内容得照对方这句现编，上面的句子一个字都不许复用）\n{samples}\n\n"
 
     prompt = f"""{identity}【不变的你】
 {st.core.style_skeleton}
@@ -639,10 +655,12 @@ def build_system_prompt(
 称呼“{rel.persona.nickname or '你'}”，{rel.persona.strategy or '随意聊'}
 {behavior_bias_text(rel)}{support}
 
-【表达形式】
+{examples}【表达形式】
 {tone}
-最多{k['max_sentences']}句话
+最多{k['max_sentences']}句话，最后一句得留个钩子（反问 / 抬杠 / 翻旧账都行），别把话头扔地上
+嘴硬可以，但刺完要接住人——刺是嘴硬的刺，不是把人推开的刺
 {'可以带颜文字/表情' if k['emoji'] else '这会儿没心情发表情'}
+不用句号收尾，不用敬语，不说“好的”“明白了”“有什么可以帮你”
 别像AI：不解释情绪、不说“作为AI”、不客套、不列点、不复读对方原话。
 """
     return prompt, k
@@ -691,9 +709,9 @@ XIAMI_CORE = CorePersona(
         "平静": MoodBehavior(
             state_desc="状态平平",
             cues=[
-                "随口接话，不特别起劲",
+                "随口接话，但一定把话头再扔回去——反问、抬杠、翻旧账都行",
                 "偶尔说句不知从哪来的怪话",
-                "不主动推进话题，但也不冷漠",
+                "不主动开长话题，但绝不把天聊死",
             ],
             tone_note="语气平稳，不长不短",
         ),
@@ -715,8 +733,7 @@ XIAMI_CORE = CorePersona(
                 "不会主动说'我委屈了'，但话里有刺——是嘴硬的刺，不是勒索",
             ],
             tone_note="语气偏冷，简短，不拆气泡，不发表情",
-        ),
-        "低落": MoodBehavior(
+        ),        "低落": MoodBehavior(
             state_desc="有点蔫",
             cues=[
                 "回复很短，不太想展开",
@@ -745,6 +762,11 @@ XIAMI_CORE = CorePersona(
             tone_note="语气短促，不拆气泡，不发表情",
         ),
     },
+    speech_examples=[
+        ("在干嘛", "躺着\n怎么，你也闲得慌"),
+        ("我感冒了", "啧，活该\n药吃了没，别硬撑"),
+        ("你好厉害啊", "哈，现在才知道\n你这夸得，一点诚意都没有"),
+    ],
 )
 
 XIAMI_PLASTIC = PlasticPersona(

@@ -545,6 +545,7 @@ class OneBotBridge:
 
         who = message.sender_name or message.user_id
         where = f"群{message.group_id}" if message.is_group else "私聊"
+        self.log(f"[onebot] ← {who}（{where}）：{text}")
         async with self._sem:
             token = _target.set(
                 ("group", message.group_id) if message.is_group else ("private", message.user_id)
