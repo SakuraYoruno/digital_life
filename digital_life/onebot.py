@@ -63,6 +63,8 @@ class OneBotConfig:
     group_reply_prob: float = 0.06
     group_cooldown: float = 180.0
     group_names: tuple[str, ...] = ("夏弥", "小龙女", "虾米")
+    # 打开后会把"旁听"的群消息也打日志，方便确认她到底有没有在听
+    verbose: bool = False
     command_prefix: str = "/"
     at_reply: bool = True
     bubble_interval: float = 0.6
@@ -101,6 +103,7 @@ def config_from_env(env: dict[str, str] | None = None) -> OneBotConfig:
         group_reply_prob=float(e.get("DIGITAL_LIFE_QQ_GROUP_PROB") or 0.06),
         group_cooldown=float(e.get("DIGITAL_LIFE_QQ_GROUP_COOLDOWN") or 180.0),
         group_names=_split_csv(e.get("DIGITAL_LIFE_QQ_GROUP_NAMES")) or ("夏弥", "小龙女", "虾米"),
+        verbose=(e.get("DIGITAL_LIFE_QQ_VERBOSE") or "") in ("1", "true", "True", "on"),
         command_prefix=e.get("DIGITAL_LIFE_QQ_PREFIX") or "/",
         at_reply=(e.get("DIGITAL_LIFE_QQ_AT_REPLY") or "1") not in ("0", "false", "False"),
         bubble_interval=float(e.get("DIGITAL_LIFE_QQ_BUBBLE_INTERVAL") or 0.6),
@@ -523,6 +526,14 @@ class OneBotBridge:
         self._sem = asyncio.Semaphore(max(1, self.config.concurrency))
         self._tasks: set[asyncio.Task[Any]] = set()
         self._last_group_reply: dict[str, float] = {}
+        self._warned: set[tuple[str, str]] = set()
+
+    def _warn_once(self, key: tuple[str, str], line: str) -> None:
+        """同一个原因只提示一次，免得热闹的群里刷屏。"""
+        if key in self._warned:
+            return
+        self._warned.add(key)
+        self.log(line)
 
     # -- 过滤 ---------------------------------------------------------
     def should_reply(self, message: IncomingMessage) -> bool:
@@ -583,6 +594,9 @@ class OneBotBridge:
 
     async def _observe(self, message: IncomingMessage, text: str) -> None:
         """只听不说：让她记住群里聊了什么，但不生成、不发送。"""
+        if self.config.verbose:
+            who = message.sender_name or message.user_id
+            self.log(f"[onebot] 〔旁听〕{who}（群{message.group_id}）：{text[:40]}")
         async with self._sem:
             try:
                 await self.engine.on_message(
@@ -601,6 +615,11 @@ class OneBotBridge:
 
         if message.is_group:
             if not self.config.allow_group(str(message.group_id)):
+                self._warn_once(
+                    ("group", str(message.group_id)),
+                    f"[onebot] 群 {message.group_id} 不在白名单，整群忽略"
+                    f"（白名单：{', '.join(self.config.group_allow) or '空'}）",
+                )
                 return
             if not self.should_reply(message):
                 if not self.should_chime_in(message):
@@ -610,6 +629,11 @@ class OneBotBridge:
                 if self.config.group_mode == "ambient":
                     self._last_group_reply[str(message.group_id)] = time.time()
         elif not self.config.allow_private(message.user_id):
+            self._warn_once(
+                ("private", message.user_id),
+                f"[onebot] QQ {message.user_id} 不在私聊白名单，忽略"
+                f"（白名单：{', '.join(self.config.private_allow) or '空'}）",
+            )
             return
 
         who = message.sender_name or message.user_id
