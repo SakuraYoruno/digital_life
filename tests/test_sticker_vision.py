@@ -274,3 +274,75 @@ def test_bridge_keeps_placeholder_when_vision_fails():
 
     asyncio.run(bridge.handle(message))
     assert "[图片]" in engine.calls[0][1]
+
+
+# ---------------------------------------------------------------------------
+# 只用表情接话（群里不吭声，但丢一张图）
+# ---------------------------------------------------------------------------
+
+
+class _StickerSender:
+    def __init__(self, ok: bool = True) -> None:
+        self.calls: list[tuple] = []
+        self.ok = ok
+
+    async def __call__(self, uid, *, group_id=None, mood=""):
+        self.calls.append((uid, group_id, mood))
+        return self.ok
+
+
+def _group_message(text: str = "今天好热") -> IncomingMessage:
+    return IncomingMessage(user_id="222", text=text, group_id="555", at_me=False)
+
+
+def test_sticker_only_respects_cooldown():
+    sender = _StickerSender()
+    bridge = OneBotBridge(
+        _Recorder(),
+        OneBotConfig(group_mode="ambient", sticker_only_prob=0.9, sticker_cooldown=300),
+        log=lambda line: None,
+        rng=random.Random(1),
+        sticker_sender=sender,
+    )
+    message = _group_message()
+    assert bridge.should_sticker_only(message, now=1000.0) is True
+    bridge._last_sticker["555"] = 1000.0
+    assert bridge.should_sticker_only(message, now=1100.0) is False
+    assert bridge.should_sticker_only(message, now=1400.0) is True
+
+
+def test_sticker_only_requires_sender_and_ambient():
+    assert OneBotBridge(
+        _Recorder(), OneBotConfig(group_mode="ambient", sticker_only_prob=1.0), log=lambda l: None
+    ).should_sticker_only(_group_message()) is False
+
+    sender = _StickerSender()
+    assert OneBotBridge(
+        _Recorder(),
+        OneBotConfig(group_mode="mention", sticker_only_prob=1.0),
+        log=lambda l: None,
+        sticker_sender=sender,
+    ).should_sticker_only(_group_message()) is False
+
+
+def test_bridge_replies_with_sticker_instead_of_text():
+    sender = _StickerSender()
+    engine = _Recorder()
+    bridge = OneBotBridge(
+        engine,
+        OneBotConfig(
+            group_mode="ambient",
+            group_reply_prob=0.0,     # 不接话
+            sticker_only_prob=1.0,    # 但用表情回应
+            sticker_cooldown=0,
+        ),
+        log=lambda line: None,
+        rng=random.Random(1),
+        sticker_sender=sender,
+    )
+
+    asyncio.run(bridge.handle(_group_message()))
+
+    assert len(sender.calls) == 1
+    assert sender.calls[0][1] == "555"
+    assert engine.calls == []          # 没有生成文字回复

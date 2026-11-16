@@ -337,6 +337,8 @@ async def cmd_im(args: argparse.Namespace) -> int:
         config.sticker_dir = args.stickers
     if args.sticker_prob is not None:
         config.sticker_prob = args.sticker_prob
+    if args.sticker_only_prob is not None:
+        config.sticker_only_prob = args.sticker_only_prob
     if args.no_vision:
         config.vision = False
 
@@ -370,7 +372,12 @@ async def cmd_im(args: argparse.Namespace) -> int:
     describer = ImageDescriber(big) if config.vision else None
     if describer is not None and not describer.available:
         describer = None
-    bridge = OneBotBridge(engine, config, describer=describer)
+    bridge = OneBotBridge(
+        engine,
+        config,
+        describer=describer,
+        sticker_sender=io.send_sticker if stickers is not None else None,
+    )
     client.on_message = bridge.dispatch
 
     me = config.self_id or "（等 NapCat 报上来）"
@@ -481,6 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--group-cooldown", type=float, default=None, help="ambient 模式下两次接话的最小间隔（秒）")
     im.add_argument("--stickers", default=None, help="表情包目录，给了才会发表情包")
     im.add_argument("--sticker-prob", type=float, default=None, help="每条回复补一张表情包的概率")
+    im.add_argument("--sticker-only-prob", type=float, default=None, help="群里不接话、只丢一张表情的概率")
     im.add_argument("--no-vision", action="store_true", help="关掉看图：收到的图只显示 [图片]/[表情包]")
     im.add_argument(
         "--single-message",

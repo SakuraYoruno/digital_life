@@ -68,6 +68,9 @@ class OneBotConfig:
     sticker_meta: str = ""
     sticker_prob: float = 0.15
     sticker_delay: float = 0.8
+    # 不接话时只用一张表情回应（群聊），以及两次表情之间的冷却
+    sticker_only_prob: float = 0.05
+    sticker_cooldown: float = 300.0
     # 收到图片时用多模态模型看一眼（关掉就只显示 [图片]/[表情包]）
     vision: bool = True
     # 打开后会把"旁听"的群消息也打日志，方便确认她到底有没有在听
@@ -115,6 +118,8 @@ def config_from_env(env: dict[str, str] | None = None) -> OneBotConfig:
         sticker_meta=e.get("DIGITAL_LIFE_QQ_STICKER_META") or "",
         sticker_prob=float(e.get("DIGITAL_LIFE_QQ_STICKER_PROB") or 0.15),
         sticker_delay=float(e.get("DIGITAL_LIFE_QQ_STICKER_DELAY") or 0.8),
+        sticker_only_prob=float(e.get("DIGITAL_LIFE_QQ_STICKER_ONLY_PROB") or 0.05),
+        sticker_cooldown=float(e.get("DIGITAL_LIFE_QQ_STICKER_COOLDOWN") or 300.0),
         vision=(e.get("DIGITAL_LIFE_QQ_VISION") or "1") not in ("0", "false", "False", "off"),
         command_prefix=e.get("DIGITAL_LIFE_QQ_PREFIX") or "/",
         at_reply=(e.get("DIGITAL_LIFE_QQ_AT_REPLY") or "1") not in ("0", "false", "False"),
@@ -545,17 +550,15 @@ class OneBotIO:
 
         await self._maybe_sticker(uid, group_id, knobs)
 
-    async def _maybe_sticker(
-        self, uid: str, group_id: str | None, knobs: dict[str, Any]
-    ) -> None:
-        if self.stickers is None or self.config.sticker_prob <= 0:
-            return
-        if self.rng.random() >= self.config.sticker_prob:
-            return
-        sticker = self.stickers.pick(str(knobs.get("mood") or ""))
+    async def send_sticker(
+        self, uid: str, *, group_id: str | None = None, mood: str = ""
+    ) -> bool:
+        """单独发一张表情包，不配文字。返回是否真的发出去了。"""
+        if self.stickers is None:
+            return False
+        sticker = self.stickers.pick(mood)
         if sticker is None:
-            return
-        await asyncio.sleep(max(0.0, self.config.sticker_delay))
+            return False
         # sub_type=1 + summary=[动画表情] 才会被 QQ 当成"表情包"存下来；
         # 只发 image 的话是普通图片（大图、带白底），这是两种不同的消息类型。
         segments = [
@@ -575,8 +578,23 @@ class OneBotIO:
                 await self.client.send_private(uid, segments)
         except OneBotError as exc:
             self.client.log(f"[onebot] 表情包发送失败：{exc}")
+            return False
+        self.client.log(
+            f"[onebot] 发了一张表情包：{sticker.path}（{sticker.summary or '无描述'}）"
+        )
+        return True
+
+    async def _maybe_sticker(
+        self, uid: str, group_id: str | None, knobs: dict[str, Any]
+    ) -> None:
+        if self.stickers is None or self.config.sticker_prob <= 0:
             return
-        self.client.log(f"[onebot] 补了一张表情包：{sticker.path}（{sticker.summary or '无描述'}）")
+        if self.rng.random() >= self.config.sticker_prob:
+            return
+        await asyncio.sleep(max(0.0, self.config.sticker_delay))
+        await self.send_sticker(
+            uid, group_id=group_id, mood=str(knobs.get("mood") or "")
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +620,7 @@ class OneBotBridge:
         log: Callable[[str], None] | None = None,
         rng: random.Random | None = None,
         describer: Any | None = None,
+        sticker_sender: Callable[..., Any] | None = None,
     ) -> None:
         self.engine = engine
         self.config = config or config_from_env()
@@ -616,6 +635,8 @@ class OneBotBridge:
         self._sem = asyncio.Semaphore(max(1, self.config.concurrency))
         self._tasks: set[asyncio.Task[Any]] = set()
         self._last_group_reply: dict[str, float] = {}
+        self._last_sticker: dict[str, float] = {}
+        self.sticker_sender = sticker_sender
         self._warned: set[tuple[str, str]] = set()
 
     def _warn_once(self, key: tuple[str, str], line: str) -> None:
@@ -671,6 +692,32 @@ class OneBotBridge:
             return False
         return self.rng.random() < self.group_chance(message.text)
 
+    def should_sticker_only(self, message: IncomingMessage, *, now: float | None = None) -> bool:
+        """这次不接话，但可以用一张表情回应——群里最常见的"接话"其实是这样。"""
+        if self.sticker_sender is None or self.config.sticker_only_prob <= 0:
+            return False
+        if self.config.group_mode != "ambient":
+            return False
+        group_id = str(message.group_id)
+        now = time.time() if now is None else now
+        if now - self._last_sticker.get(group_id, 0.0) < self.config.sticker_cooldown:
+            return False
+        return self.rng.random() < self.config.sticker_only_prob
+
+    async def _reply_with_sticker(self, message: IncomingMessage) -> None:
+        self._last_sticker[str(message.group_id)] = time.time()
+        mood = str(getattr(getattr(self.engine, "st", None), "mood", "") or "")
+        try:
+            sent = await self.sticker_sender(  # type: ignore[misc]
+                message.user_id, group_id=message.group_id, mood=mood
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"[onebot] 表情包发送失败：{type(exc).__name__}: {exc}")
+            return
+        if sent:
+            who = message.sender_name or message.user_id
+            self.log(f"[onebot] {who}（群{message.group_id}）→ [表情包]")
+
     # -- 调度 ---------------------------------------------------------
     def dispatch(self, message: IncomingMessage) -> None:
         """客户端回调：不 await，交给后台任务，慢生成不挡下一条消息。"""
@@ -722,12 +769,16 @@ class OneBotBridge:
                 )
                 return
             if not self.should_reply(message):
-                if not self.should_chime_in(message):
+                if self.should_chime_in(message):
+                    if self.config.group_mode == "ambient":
+                        self._last_group_reply[str(message.group_id)] = time.time()
+                elif self.should_sticker_only(message):
+                    await self._reply_with_sticker(message)
+                    return
+                else:
                     if self.config.group_mode == "ambient":
                         await self._observe(message, text)
                     return
-                if self.config.group_mode == "ambient":
-                    self._last_group_reply[str(message.group_id)] = time.time()
         elif not self.config.allow_private(message.user_id):
             self._warn_once(
                 ("private", message.user_id),

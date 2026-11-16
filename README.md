@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 130 个单元/集成测试
+├── tests/                    # 133 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -500,13 +500,24 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 # 描述文件用环境变量给：DIGITAL_LIFE_QQ_STICKER_META=D:\DSH-QQ\表情包收藏.json
 ```
 
+**三种"主动"程度**，按需要往上加：
+
+| 行为 | 开关 | 默认 | 触发场景 |
+|---|---|---|---|
+| 话后附一张 | `--sticker-prob` | 0.15 | 每次文字回复后掷一次 |
+| 不吭声，只丢一张 | `--sticker-only-prob` | 0.05 | 群里没接话时，替代沉默 |
+| 两次表情的间隔 | `DIGITAL_LIFE_QQ_STICKER_COOLDOWN` | 300s | 防止刷屏式发表情 |
+
+第二种才是最像人的：QQ 群里大部分"接话"其实不用写字，甩一张图就够了。
+它只在 `ambient` 模式下生效——`mention` 模式下她连没 @ 的消息都不看，自然也轮不到甩图。
+
 ---
 
 ## 9. 测试
 
 ```bash
 python -m pytest
-# 130 passed
+# 133 passed
 ```
 
 覆盖：
