@@ -1241,6 +1241,19 @@ async def detect_group_slang(
     return written
 
 
+def _hit_threshold(mem: Any, base: float) -> float:
+    """命中阈值要跟着 embedding 后端走。
+
+    0.4 / 0.55 这组是按内置哈希向量标定的；换成 bge-m3 后语义相似度整体抬高
+    （无关问题也能到 0.6~0.7），沿用旧阈值会把"今天天气"答成游戏攻略。
+    实测相关查询 ≈0.95、无关 ≈0.67，所以 bge 下抬到 0.82。
+    """
+    name = str(getattr(mem, "embedder_name", "hash"))
+    if name.startswith(("ollama", "openai", "bge")):
+        return max(base, 0.82)
+    return base
+
+
 async def maybe_fetch_knowledge(
     small_llm: Any,
     mem: MemoryStore,
@@ -1257,7 +1270,7 @@ async def maybe_fetch_knowledge(
         slang = await mem.search(
             f"{group_id}:__slang__", query, k=1, kind="knowledge", now=now
         )
-        if slang and slang[0].score > 0.55:
+        if slang and slang[0].score > _hit_threshold(mem, 0.55):
             return f"[群内梗] {slang[0].text}"
 
     uids = ["__knowledge__"]
@@ -1265,7 +1278,7 @@ async def maybe_fetch_knowledge(
         uids.append(f"{group_id}:__knowledge__")
     for uid in uids:
         hits = await mem.search(uid, query, k=1, kind="knowledge", now=now)
-        if hits and hits[0].score > 0.4:
+        if hits and hits[0].score > _hit_threshold(mem, 0.4):
             return f"[已知] {hits[0].text}"
 
     if search_fn is None:

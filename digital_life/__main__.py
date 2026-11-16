@@ -23,6 +23,7 @@ from .embedding import make_embedder
 from .env_loader import load_windows_environment
 from .engine import DigitalLife, EngineConfig
 from .io import CollectingIO, ConsoleIO
+from .kb import import_markdown
 from .llm import llm_from_env
 from .memory import MemoryStore
 from .onebot import OneBotBridge, OneBotClient, OneBotIO, config_from_env
@@ -31,6 +32,7 @@ from .persistence import ObsidianReflector, StateStore
 from .personas import default_state, xiami_state
 from .simulation import FakeClock, run_simulation
 from .vision import ImageDescriber
+from .websearch import make_search_fn
 
 
 def _default_data_dir() -> Path:
@@ -347,6 +349,13 @@ async def cmd_im(args: argparse.Namespace) -> int:
     if args.no_vision:
         config.vision = False
 
+    search_kind = (args.search or os.getenv("DIGITAL_LIFE_SEARCH") or "off").lower()
+    search_fn = make_search_fn(
+        search_kind, proxy=os.getenv("DIGITAL_LIFE_SEARCH_PROXY")
+    )
+    if search_fn is not None:
+        print(f"联网检索：{search_kind}（知识库没命中时才会用）")
+
     client = OneBotClient(config)
     stickers = None
     if config.sticker_dir:
@@ -369,7 +378,7 @@ async def cmd_im(args: argparse.Namespace) -> int:
             clock=time.time,
             rng=None,
             vault_path=str(reflector.vault) if reflector else None,
-            search_fn=None,
+            search_fn=search_fn,
             tick_seconds=config.tick_seconds,
             # 常驻进程会被强杀（更新/重启），10 分钟一存太冒险：关系一丢，
             # 她连「这个人昨天刚聊过」都不记得，夜间反思也没对象可反思。
@@ -424,6 +433,48 @@ async def cmd_im(args: argparse.Namespace) -> int:
         if embedder is not None:
             embedder.close()
     print(f"状态已保存到 {state_path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# kb（把 Markdown 资料导入知识层）
+# ---------------------------------------------------------------------------
+
+
+async def cmd_kb(args: argparse.Namespace) -> int:
+    data_dir, mem_path, state_path = _paths(args)
+    embedder = _make_embedder(args)
+    mem = MemoryStore(mem_path, clock=time.time, embedder=embedder)
+    target = Path(args.dir).expanduser()
+    if target.is_dir():
+        files = sorted(target.rglob("*.md"))
+    elif target.is_file():
+        files = [target]
+    else:
+        print(f"找不到：{target}")
+        return 1
+    if not files:
+        print(f"{target} 里没有 .md")
+        return 1
+
+    total = {"written": 0, "skipped": 0, "chunks": 0}
+    for file_path in files:
+        stats = await import_markdown(
+            mem, file_path, uid=args.uid, max_chars=args.chunk, now=time.time()
+        )
+        for key in total:
+            total[key] += stats[key]
+        print(
+            f"  {file_path.name}: 写入 {stats['written']} / 跳过 {stats['skipped']}"
+            f"（切块 {stats['chunks']}）"
+        )
+    print(
+        f"合计：文件 {len(files)}，写入 {total['written']} 块，"
+        f"跳过 {total['skipped']} 块 → uid={args.uid}"
+    )
+    mem.close()
+    if embedder is not None:
+        embedder.close()
     return 0
 
 
@@ -502,11 +553,21 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--sticker-only-prob", type=float, default=None, help="群里不接话、只丢一张表情的概率")
     im.add_argument("--no-vision", action="store_true", help="关掉看图：收到的图只显示 [图片]/[表情包]")
     im.add_argument(
+        "--search", choices=("off", "bing"), default=None,
+        help="知识库没有时是否联网检索（默认 off，也可用 DIGITAL_LIFE_SEARCH）",
+    )
+    im.add_argument(
         "--single-message",
         action="store_true",
         help="她一句话分两口气时并成一条发（默认按两条气泡发，更像真人）",
     )
     im.set_defaults(func=cmd_im)
+
+    kb = sub.add_parser("kb", parents=[common], help="把 Markdown 资料导入知识层")
+    kb.add_argument("--dir", required=True, help="一个 .md 文件或目录（递归找 *.md）")
+    kb.add_argument("--uid", default="__knowledge__", help="写进哪个知识分区")
+    kb.add_argument("--chunk", type=int, default=700, help="单块最大字符数")
+    kb.set_defaults(func=cmd_kb)
     return parser
 
 
