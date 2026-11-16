@@ -297,9 +297,11 @@ def _group_message(text: str = "今天好热") -> IncomingMessage:
 
 def test_sticker_only_respects_cooldown():
     sender = _StickerSender()
+    engine = _Recorder()
+    engine.st.A = 1.0          # 最来劲 + 概率 1 = 必发
     bridge = OneBotBridge(
-        _Recorder(),
-        OneBotConfig(group_mode="ambient", sticker_only_prob=0.9, sticker_cooldown=300),
+        engine,
+        OneBotConfig(group_mode="ambient", sticker_only_prob=1.0, sticker_cooldown=300),
         log=lambda line: None,
         rng=random.Random(1),
         sticker_sender=sender,
@@ -346,3 +348,33 @@ def test_bridge_replies_with_sticker_instead_of_text():
     assert len(sender.calls) == 1
     assert sender.calls[0][1] == "555"
     assert engine.calls == []          # 没有生成文字回复
+
+
+def test_io_respects_engine_sticker_knob(tmp_path):
+    """引擎给的旋钮说"这次不发"，就不该发——哪怕配置概率是 1。"""
+    book = _make_library(tmp_path)
+    config = OneBotConfig(bubble_interval=0, sticker_prob=1.0, sticker_delay=0)
+    client = _FakeClient()
+    io = OneBotIO(client, config, stickers=book, rng=random.Random(0))
+
+    asyncio.run(io.send("222", "嗯", {"mood": "平静", "sticker": False}))
+    assert len(client.sent) == 1
+
+
+def test_sticker_only_chance_scales_with_arousal():
+    sender = _StickerSender()
+    engine = _Recorder()
+    bridge = OneBotBridge(
+        engine,
+        OneBotConfig(group_mode="ambient", sticker_only_prob=0.3, sticker_cooldown=0),
+        log=lambda line: None,
+        rng=random.Random(3),
+        sticker_sender=sender,
+    )
+
+    engine.st.A = 0.0
+    low = sum(1 for i in range(300) if bridge.should_sticker_only(_group_message(), now=1000.0 + i))
+    engine.st.A = 1.0
+    high = sum(1 for i in range(300) if bridge.should_sticker_only(_group_message(), now=2000.0 + i))
+
+    assert high > low, f"A=0 时 {low} 次，A=1 时 {high} 次"

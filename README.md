@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 133 个单元/集成测试
+├── tests/                    # 136 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -504,9 +504,15 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 | 行为 | 开关 | 默认 | 触发场景 |
 |---|---|---|---|
-| 话后附一张 | `--sticker-prob` | 0.15 | 每次文字回复后掷一次 |
-| 不吭声，只丢一张 | `--sticker-only-prob` | 0.05 | 群里没接话时，替代沉默 |
+| 话后附一张 | 引擎旋钮 `sticker` | 由 A 决定 | 每次文字回复后；`A=0.1` 约 15%，`A=0.9` 约 40% |
+| 不吭声，只丢一张 | `--sticker-only-prob` | 0.05 | 群里没接话时替代沉默；实际概率 = 基数 × (0.4 + 1.2·A) |
 | 两次表情的间隔 | `DIGITAL_LIFE_QQ_STICKER_COOLDOWN` | 300s | 防止刷屏式发表情 |
+
+**频率归 A 管，不归配置管**——和 `exclaim` / `emoji` / `split_bubbles` 是同一套旋钮：
+`arousal_knobs()` 里按 `sticker_rate × (0.2 + 0.8·A)` 掷一次，出站 IO 只负责执行。
+她兴奋时爱甩图、蔫下去几乎不发，情绪曲线就是表情包曲线。
+
+`--sticker-prob` 现在只是**兜底**：外部直接调 `io.send()`、没经过引擎旋钮时才用它。
 
 第二种才是最像人的：QQ 群里大部分"接话"其实不用写字，甩一张图就够了。
 它只在 `ambient` 模式下生效——`mention` 模式下她连没 @ 的消息都不看，自然也轮不到甩图。
@@ -517,7 +523,7 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 ```bash
 python -m pytest
-# 133 passed
+# 136 passed
 ```
 
 覆盖：

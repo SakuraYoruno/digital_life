@@ -70,6 +70,20 @@ def test_arousal_knobs_ranges():
         assert 0.5 <= k["temperature"] <= 1.1
         assert k["max_sentences"] in (1, 2, 3)
         assert isinstance(k["split_bubbles"], bool)
+        assert isinstance(k["sticker"], bool)
+
+
+def test_sticker_knob_scales_with_arousal():
+    """表情包频率必须跟着 A 走：兴奋时爱甩图，蔫下去就懒得发。"""
+    st = xiami_state()
+    rng = random.Random(7)
+
+    st.A = 0.9
+    hot = sum(1 for _ in range(400) if arousal_knobs(st, rng)["sticker"])
+    st.A = 0.05
+    cold = sum(1 for _ in range(400) if arousal_knobs(st, rng)["sticker"])
+
+    assert hot > cold * 1.5, f"A=0.9 出图 {hot} 次，A=0.05 出图 {cold} 次"
 
 
 def test_build_system_prompt_has_four_layers_and_no_pad_numbers():

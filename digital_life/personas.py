@@ -558,6 +558,9 @@ def arousal_knobs(st: LifeState, rng: random.Random | None = None) -> dict[str, 
         "split_bubbles": a > 0.6,
         "exclaim": rng.random() < traits.get("exclaim_rate", 0.3) * (0.4 + a),
         "emoji": rng.random() < traits.get("emoji_rate", 0.3) * (0.3 + 0.7 * a),
+        # 表情包也归 A 管：越来劲越爱甩图，蔫下去就懒得发。
+        # 出站 IO 读这个布尔值，不再自己掷骰子。
+        "sticker": rng.random() < traits.get("sticker_rate", 0.5) * (0.2 + 0.8 * a),
     }
 
 
@@ -822,6 +825,7 @@ XIAMI_PLASTIC = PlasticPersona(
     style_traits={
         "exclaim_rate": 0.45,
         "emoji_rate": 0.35,
+        "sticker_rate": 0.55,
         "avg_len": 1.0,
     },
 )

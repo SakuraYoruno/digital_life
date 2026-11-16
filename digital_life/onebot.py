@@ -587,9 +587,13 @@ class OneBotIO:
     async def _maybe_sticker(
         self, uid: str, group_id: str | None, knobs: dict[str, Any]
     ) -> None:
-        if self.stickers is None or self.config.sticker_prob <= 0:
+        if self.stickers is None:
             return
-        if self.rng.random() >= self.config.sticker_prob:
+        # 发不发由引擎按 A 维算好的旋钮说了算；没有旋钮时才退回固定概率。
+        decision = knobs.get("sticker")
+        if decision is None:
+            decision = self.rng.random() < self.config.sticker_prob
+        if not decision:
             return
         await asyncio.sleep(max(0.0, self.config.sticker_delay))
         await self.send_sticker(
@@ -702,7 +706,10 @@ class OneBotBridge:
         now = time.time() if now is None else now
         if now - self._last_sticker.get(group_id, 0.0) < self.config.sticker_cooldown:
             return False
-        return self.rng.random() < self.config.sticker_only_prob
+        # 和文字回复同一个旋钮：越来劲越可能只甩一张图。
+        arousal = float(getattr(getattr(self.engine, "st", None), "A", 0.3))
+        chance = self.config.sticker_only_prob * (0.4 + 1.2 * arousal)
+        return self.rng.random() < min(1.0, max(0.0, chance))
 
     async def _reply_with_sticker(self, message: IncomingMessage) -> None:
         self._last_sticker[str(message.group_id)] = time.time()
