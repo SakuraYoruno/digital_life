@@ -1,0 +1,422 @@
+# 数字生命（digital_life）
+
+《数字生命 开发文档》的可运行实现。一个极简单体：**一套情绪 / 驱力 / 记忆 / 人格状态就是“她”本身**，不拆器官、不仲裁、不做审计链路。两个循环：
+
+- **快循环** `on_message`：有人说话 → 感知 → appraisal → 驱力/PAD → mood → 四层提示词 → 生成 → 安全闸 → 发送。
+- **慢循环** `life_tick`：没人时也活着 → 驱力流失 / 情绪回归 → 念头流 → 主动发言 → 会话结算。
+
+本项目是**独立的 Python 包与 CLI**，不依赖任何特定宿主或 IM 平台；QQ/Obsidian 只是可选接入方向，
+拿到任何 Python 3.10+ 环境里都能直接跑。
+
+零第三方运行时依赖：Python 3.10+ 标准库即可跑通；接真实模型时可选装 `openai`，启用 `sqlite-vec` 索引时可选装 `sqlite-vec`，接 Ollama embedding 时可选装 `httpx`。
+
+---
+
+## 1. 快速开始
+
+```bash
+cd "D:\digital_life"
+
+# 0) 本地模型：embedding 默认 bge-m3（显存约 689MB）；对话小模型 qwen3:1.7b
+ollama pull bge-m3
+ollama pull qwen3:1.7b
+
+# 1) 一分钟演示：情绪、独处念头、主动发言
+python -m digital_life demo
+
+# 2) 控制台聊天（本机有 qwen3:1.7b 时自动用；--mock 强制离线）
+python -m digital_life chat
+python -m digital_life chat --mock
+
+# 3) 7 日评估仿真：四种用户画像 + 自动断言
+python -m digital_life sim --days 7 --seed 42 --strict --verbose
+
+# 4) 跑测试
+python -m pytest
+```
+
+安装可选能力：
+
+```bash
+# sqlite-vec + httpx（Ollama embedding）
+python -m pip install "digital-life[ollama]"
+
+# 接真实对话模型
+python -m pip install "digital-life[openai]"
+```
+
+本机当前的 embedding 配置已经验证可用（按**显存**选型）：
+
+```text
+ollama ps 实测（RTX 5080，单模型加载）
+bge-m3                 689 MB   ← 默认，中文强
+qwen3-embedding:0.6b  1.2 GB    ← 已删除；文件小但 f16 显存更高（仅作对比）
+nomic-embed-text       335 MB   ← 更省，中文弱
+all-minilm              27 MB   ← 极省，只适合粗召回
+
+MemoryStore.vector_backend
+sqlite-vec 0.1.9 · ollama:bge-m3 1024d
+```
+
+| 模型 | 文件 | 显存（实测） | 维度 | 取舍 |
+|---|---:|---:|---:|---|
+| `bge-m3` | 1.2 GB | **689 MB** | 1024 | 默认；中文强，显存反而低 |
+| `qwen3-embedding:0.6b` | 639 MB | 1.2 GB | 1024 | 已删除；文件小但显存更高（仅作对比） |
+| `nomic-embed-text` | 274 MB | 335 MB | 768 | 显存低，中文明显弱 |
+| `all-minilm` | 46 MB | 27 MB | 384 | 极低显存，基本只能粗召回 |
+
+所以如果**主要看显存**，默认用 `bge-m3` 更划算：它文件大，但加载后只占约 689MB；
+`qwen3-embedding:0.6b` 文件小一半，实际显存反而约 1.2GB（该模型已删除，仅保留对比记录）。
+`bge-m3` 首次调用约 1～2 秒。
+
+Ollama 的模型不是永久常驻：默认 `keep_alive=5m`，空闲 5 分钟后卸载，只有被调用时才占显存。
+想更省可以：
+
+```bash
+set DIGITAL_LIFE_EMBED_KEEP_ALIVE=1m
+# 或者每次用完立刻卸载（会牺牲下一次响应速度）
+set DIGITAL_LIFE_EMBED_KEEP_ALIVE=0s
+ollama ps   # 观察当前加载了哪些模型
+```
+
+如果显存仍然紧张，换 `nomic-embed-text`（335MB，768 维）或 `all-minilm`（27MB，384 维）：
+
+```bash
+ollama pull nomic-embed-text
+set DIGITAL_LIFE_EMBED_MODEL=nomic-embed-text
+set DIGITAL_LIFE_EMBED_DIM=768
+```
+
+切换 embedding 模型会重建 `vec_memories` 并按新模型重算旧记忆；即使维度相同也会重建
+（`vec_embedder` 元数据会记录模型名），所以同一个 `data/` 目录请保持相同的 `--embed` 配置。
+
+本机当前还拉取了小模型：
+
+```text
+ollama list
+bge-m3:latest           1.2 GB
+qwen3:1.7b              1.4 GB
+nomic-embed-text:latest 274 MB
+all-minilm:latest        45 MB
+
+对话模型：qwen3:1.7b / 小模型：qwen3:1.7b
+```
+
+没有配置任何模型环境变量时，如果本机 Ollama 已有 `qwen3:1.7b`，`llm_from_env` 会自动走全本地；
+否则才回退 MockLLM。`--mock` 可强制离线，方便跑测试或演示。
+
+Qwen3 是思考模型，默认会把正文放进 `reasoning`、`content` 为空。代码在检测到 `qwen3` 时
+自动传 `reasoning_effort="none"`，让小模型稳定输出 appraisal JSON，也让对话模型直接出正文。
+全本地配置：
+
+```bash
+set DIGITAL_LIFE_SMALL_MODEL=qwen3:1.7b
+set DIGITAL_LIFE_SMALL_BASE_URL=http://127.0.0.1:11434/v1
+set DIGITAL_LIFE_SMALL_API_KEY=ollama
+set DIGITAL_LIFE_BIG_MODEL=qwen3:1.7b
+set DIGITAL_LIFE_BASE_URL=http://127.0.0.1:11434/v1
+set DIGITAL_LIFE_API_KEY=ollama
+python -m digital_life chat
+```
+
+只配置 small、不配置 big 时，big 会复用 small；如果 small 指向 Ollama 且没有 key，也能直接跑。
+可直接参考 `env.example` 的本地/云端两套配置。
+
+接云端大模型（小模型留本地 Qwen3，大模型走 DeepSeek）：
+
+```bash
+set DIGITAL_LIFE_SMALL_MODEL=qwen3:1.7b
+set DIGITAL_LIFE_SMALL_BASE_URL=http://127.0.0.1:11434/v1
+set DIGITAL_LIFE_SMALL_API_KEY=ollama
+
+set DIGITAL_LIFE_BIG_MODEL=deepseek-chat
+set DIGITAL_LIFE_BASE_URL=https://api.deepseek.com/v1
+set DIGITAL_LIFE_API_KEY=sk-...
+python -m digital_life chat
+```
+
+其他环境变量：
+
+| 变量 | 作用 |
+|---|---|
+| `DIGITAL_LIFE_DATA_DIR` | 数据目录，默认 `./data` |
+| `DIGITAL_LIFE_VAULT` | Obsidian 仓库根目录；设置后反思/自述/关系图会落盘 |
+| `DIGITAL_LIFE_MOCK=1` | 强制离线 MockLLM |
+| `DIGITAL_LIFE_EMBED_MODEL` | Ollama embedding 模型，默认 `bge-m3` |
+| `DIGITAL_LIFE_EMBED_DIM` | embedding 维度；默认按模型推断（bge-m3=1024） |
+| `DIGITAL_LIFE_EMBED_KEEP_ALIVE` | Ollama 模型驻留时间，默认 `5m`；`1m`/`0s` 更省资源 |
+| `DIGITAL_LIFE_OLLAMA_URL` | Ollama 地址，默认 `http://127.0.0.1:11434` |
+| `DIGITAL_LIFE_SMALL_MODEL` | 小模型（appraisal/念头/摘要），如 `qwen3:1.7b` |
+| `DIGITAL_LIFE_SMALL_BASE_URL` | 小模型 OpenAI 兼容地址，Ollama 用 `http://127.0.0.1:11434/v1` |
+| `DIGITAL_LIFE_SMALL_API_KEY` | 小模型 key；Ollama 可填 `ollama` |
+| `DIGITAL_LIFE_BIG_MODEL` | 对话大模型，如 `deepseek-chat` 或复用 `qwen3:1.7b` |
+| `DIGITAL_LIFE_BASE_URL` / `DIGITAL_LIFE_API_KEY` | 大模型地址与 key |
+| `DIGITAL_LIFE_SMALL_REASONING_EFFORT` | 小模型思考档位；Qwen3 默认自动设为 `none` |
+
+聊天/反思/GC 默认 `--embed auto`：检测到 Ollama 模型就用真 embedding，否则回退内置哈希。可用
+`--embed hash` 强制离线，或 `--embed ollama --embed-model bge-m3 --embed-dim 1024` 强制指定。
+仿真默认 `--embed hash`，避免长跑时反复调用 Ollama；需要端到端验证 embedding 时显式加
+`--embed ollama`。
+
+Windows 下 CLI 启动时会调用 `env_loader.load_windows_environment()`，从**用户/机器环境变量**
+补齐缺失的 `DIGITAL_LIFE_*`。所以刚在系统设置里写进去的 `DIGITAL_LIFE_API_KEY`、`DIGITAL_LIFE_BASE_URL`
+不需要重启当前进程也能被 `python -m digital_life chat` 读到；如果用的是旧终端，仍建议新开一个终端。
+
+Obsidian 落盘结构：
+
+```
+<vault>/数字生命/
+├── 自我叙事.md          # 由 nightly_reflect 增量更新
+├── 关系图谱.md          # 每个 uid 的亲密度/称呼/策略/边界
+└── 反思/YYYY-MM-DD.md   # 每次夜间反思追加
+```
+
+---
+
+## 2. 目录结构
+
+```
+digital_life/
+├── digital_life/
+│   ├── constants.py          # BASE_DT / clamp / sigmoid / scaled / token 估算 / JSON 安全解析
+│   ├── personas.py           # 三层人格、LifeState、mood 锚点、四层提示词、夏弥预设
+│   ├── appraisal.py          # LLM 定性评估（单驱力 + schema 校验 + 兜底）
+│   ├── dynamics.py           # 驱力→PAD、decay、approach_target
+│   ├── thoughts.py           # 念头流 + 多样性/衰减两道闸
+│   ├── proactive.py          # 主动发言、pending、affinity 关系动力学
+│   ├── memory.py             # 七层记忆、工作记忆、SQLite FTS5 + 向量召回、知识层
+│   ├── embedding.py          # Ollama embedding 适配器（默认 bge-m3）
+│   ├── env_loader.py         # Windows 用户/机器环境变量补全（无需重启进程）
+│   ├── context.py            # token 预算与上下文组装（硬上限 8000）
+│   ├── safety.py             # 安全闸、依赖/危机防护
+│   ├── persona_evolution.py  # nightly_reflect / evolve_persona / 语义提炼 / 周 GC
+│   ├── persistence.py        # LifeState 快照、Obsidian 落盘
+│   ├── engine.py             # 快慢双循环 + 状态锁 + 会话结算 + 后台任务
+│   ├── simulation.py         # 多画像多日仿真 + 断言
+│   ├── llm.py                # OpenAI 兼容客户端 + 离线 MockLLM
+│   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
+│   └── __main__.py           # CLI：chat / sim / demo / reflect / gc
+├── tests/                    # 85 个单元/集成测试
+├── scripts/demo.py           # demo 便捷入口
+├── scripts/simulate.py       # sim 便捷入口
+├── data/                     # 运行期 SQLite（已 gitignore）
+├── env.example               # 本地 Qwen3 / 云端大模型两套配置
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## 3. 与开发文档的对应关系
+
+| 文档 | 实现位置 | 说明 |
+|---|---|---|
+| §1 状态结构 / 三层人格 | `personas.py` | `CorePersona` / `PlasticPersona` / `RelationalPersona` / `Relation` / `LifeState` |
+| §2 appraisal | `appraisal.py`、`dynamics.py` | LLM 只输出 `{drive,valence,intensity,reason}`，数值全部由确定性公式算 |
+| §3 衰减与心跳 | `dynamics.py` | 所有 `rate` 都过 `scaled(rate, dt)`，60s / 240s tick 连续一致 |
+| §4 mood 吸附 | `personas.map_mood` | 最近质心 + `hysteresis=0.12` 滞回 |
+| §5 向量→提示词 | `personas.py` | A→旋钮、P/D→强度副词、mood_behaviors→演法、LLM 演绎；prompt 中不出现 PAD 数字 |
+| §6 念头流 | `thoughts.py` | 按 mood+drive 加权采样；闸1 多样性、闸2 lingering 衰减、闸3 主循环降频 |
+| §7 念头两个出口 | `thoughts.py`、`proactive.py` | 默认扰情绪；主动发言时把最近念头正文作为素材 |
+| §8 主动发言 | `proactive.py` | `0.6·bond_gap + 0.3·silence + 0.1·affinity`，阈值 0.25；pending 2h 过期 |
+| §8.3 affinity | `proactive.update_affinity` | 只在会话结束（沉默 >2h）结算，单次 ±0.05 |
+| §9 七层记忆 | `memory.py` | 感知缓冲/工作记忆/会话摘要/情景/语义/知识/反思，全部按 uid 隔离 |
+| §10 上下文压缩 | `context.py` | 固定预算 + 保头保尾 + 硬上限 8000 |
+| §11 人格养成 | `persona_evolution.py` | Core 锁死、Plastic 单次 ±0.05、边界只进 Relational |
+| §12.1 自我叙事 | `persona_evolution.update_self_narrative` | 注入 prompt 最前面的【我是谁】 |
+| §12.2/12.3 关系/用户模型 | `Relation.profile`、`update_affinity` | 作息时段、称呼、边界；主动发言避开睡觉时段 |
+| §12.4 记忆治理 | `persona_evolution.memory_gc` | 遗忘 / 合并 / 降级 / TTL 清理，每周一次 |
+| §12.5 评估仿真 | `simulation.py` | 冷淡/热情/找茬/长期沉默四种画像，自动断言五项指标 |
+| §12.6 安全 | `safety.py` | 禁句拦截 + 危机/过度依赖识别 + 降低黏人度 |
+| §13 主循环 | `engine.py` | 快慢循环共享状态锁；每 uid 再串行；后台任务可 drain |
+| §14 调参 | `personas.PlasticPersona` | 参数名与文档一致，见下表 |
+| §15 技术栈 | `memory.py`、`persistence.py` | SQLite 单文件、FTS5、Obsidian .md；无 LangChain |
+| §16 数学链路 | `engine.py` | 快循环/慢循环/会话结束/夜间反思四段全部落地 |
+
+---
+
+## 4. 关键实现说明（与文档不完全逐字一致的地方）
+
+这些不是“加模块”，而是让链路真的能跑起来所需的工程修正：
+
+1. **向量检索**：文档建议 `sqlite-vec`。当前环境已安装 `sqlite-vec 0.1.9`，`MemoryStore` 会加载扩展并创建 `vec0(uid PARTITION KEY, embedding float[D])`，按 uid 分区做 KNN；写/改/删与 `memories` 表同步。`D` 由 embedder 决定：默认内置哈希 192 维，Ollama `bge-m3` 为 1024 维；换模型时会根据 `vec_embedder` 元数据重建 `vec_memories` 并重算旧 embedding（即使维度相同）。没装 `sqlite-vec` 或扩展加载失败时，自动回退到 **SQLite FTS5 + 余弦扫描**。
+   - **Ollama embedding**：`embedding.py` 里 `OllamaEmbedder` 调用 `/api/embed`（旧版回退 `/api/embeddings`），默认 `bge-m3`，输出归一化向量，可传 `keep_alive` 控制驻留。`--embed auto` 检测到模型就用，否则回退哈希。
+2. **`change` 用平均绝对缺口**：文档 §2.3 写的是 `abs(mean(gap))`，正负缺口会互相抵消；实现改为 `mean(abs(gap))`，更符合“波动量”的语义，A 才对混合事件有反应。
+3. **主动发言冷却/退避**：文档只给了阈值和 pending 过期，没有冷却。若每个 tick 都过阈值会刷屏，因此加了 3h 基础冷却、未回应时 ×1.8 退避（上限 8 倍），以及“发出 2h 无回应视为未回应”。用户回消息后立即重置。
+4. **安静时段**：`UserProfile.sleep_start/end` 默认 23:00–08:00，主动发言避开；私聊/群聊都适用。
+5. **会话结束**：`WorkingMemory.finalize()` 会把剩余轮次全部压进摘要，随后 `update_affinity` 结算；否则“最终版摘要”会漏掉最后几轮。
+6. **锁的粒度**：所有 `LifeState` 写入共享 `asyncio.Lock`；同一 uid 的 `on_message` 再用 uid 锁串行。LLM 调用放在状态锁外/内按是否读状态区分，避免慢循环被一次长生成卡死。
+7. **安全重试**：主模型输出命中禁句时，不直接发送，追加一句“换一种不索取的说法”重生成一次；仍命中则不发，计入 `safety_gate_hits`。
+8. **群黑话**：每积累 50 条群消息，后台调用 `detect_group_slang` 沉淀到 `<group>:__slang__`，有 TTL/永久两种知识条目。
+9. **文档里的签名笔误**：`WorkingMemory(max_turns, max_tokens, keep_head, keep_tail, compress_batch)`、`maybe_write_episodic(...)`、`ContextAssembler.build(...)` 等已统一成可运行签名，并保留 `wm.append(user, assistant)` 兼容入口。
+10. **相似度阈值**：GC 合并用 `0.82`，知识召回用 `0.4/0.55`；这组值先在哈希向量上调过。换成 `bge-m3` 后语义相似度整体更高，可按文档的 `0.92/0.75/0.85` 再调；当前保持保守值，避免过度合并。
+11. **文档未要求的运行期字段**：`Relation` 增加了 `last_proactive_at / proactive_backoff / proactive_awaiting_reply`、`session` 统计、`UserProfile`。它们只服务冷却、会话结算和用户模型，不改变情绪数学。
+12. **长期冷落降温**：`§12.2` 只描述了方向、没给公式；实现为闲置超过 3 天后 `affinity` 每天 `-0.01`，会话结束的 ±0.05 仍是主要变化源，避免短期沉默把关系扣光。
+13. **Qwen3 thinking**：Qwen3 默认把正文放在 `reasoning`、`content` 为空；`llm.py` 检测到 `qwen3` 时自动传 `reasoning_effort="none"`，并在 content 为空时用 reasoning 兜底。小模型因此能稳定返回 appraisal JSON，大模型也不会只吐思考过程。
+
+---
+
+## 5. 调参表（代码中的名字与文档一致）
+
+| 参数 | 初值 | 位置 | 调大 |
+|---|---|---|---|
+| `guard_line` | 0.35（硬上限 0.45） | `PlasticPersona` | 更黏人、更易焦虑 |
+| `steepness` | 8.0 | `PlasticPersona` | 临界点情绪更突变 |
+| `SEND_THRESHOLD` | 0.25 | `constants.py` | 更少主动 |
+| `rho_A / rho_P` | 0.12 / 0.03 | `PlasticPersona` | 情绪消散更快 |
+| `k_A / k_P` | 0.45 / 0.35 | `PlasticPersona` | 对事件反应更强 |
+| `lam["bond"]` | 2e-6 | `PlasticPersona` | 更快孤独 |
+| `alpha_idle` | 1.5e-5 | `PlasticPersona` | 独处更煎熬 |
+| `wP["bond"]` | 0.45 | `PlasticPersona` | 关系对心情影响更大 |
+| `exclaim_rate / emoji_rate` | 0.3 / 0.3 | `style_traits` | 更活泼 |
+| `hysteresis` | 0.12 | `map_mood(..., hysteresis=)` | 情绪更稳 |
+| `style_drift` 上限 | ±0.05 | `evolve_persona` | 人格变化更快 |
+
+调参顺序按文档：`guard_line` → `rho/k` → `SEND_THRESHOLD` → 表达率 → 养成速度。
+
+---
+
+## 6. 评估仿真结果（seed=42，7 天，4 个画像）
+
+```
+messages          138
+proactive_count   38   （5.43 次/天，跨 4 个用户）
+thoughts          77
+session_endings   51
+p_std             0.1559
+p_min / p_max     0.0828 / 0.8019
+max_ctx_tokens    888
+safety_gate_hits  0
+vector_backend    sqlite-vec 0.1.9 · hash 192d
+moods             平静 213 / 开心 93
+affinity          warm 0.90 / cold 0.45 / troll 0.30 / silent 0.1642
+memory_counts     warm 9 / cold 5 / troll 8 / silent 1 / knowledge 1
+```
+
+五项断言全部通过：
+
+| 断言 | 结果 |
+|---|---|
+| 主动发言会触发 | PASS（38 次） |
+| 情绪有起伏（P 标准差 > 0.1） | PASS（0.1559） |
+| 不串记忆（按记忆 id） | PASS（文本也无重叠） |
+| 不勒索（安全闸命中 = 0） | PASS |
+| token 不爆（≤ 8000） | PASS（888） |
+
+报告写入 `data/sim_7d/sim_report.json`。仿真用 `MockLLM`，指标只证明链路通、断言成立，不代表真模型下的人类盲测效果。
+
+---
+
+## 7. 代码示例
+
+### 7.1 手动跑一轮快循环
+
+```python
+import asyncio
+from digital_life import DigitalLife, EngineConfig, MemoryStore, MockLLM, CollectingIO, xiami_state
+
+async def main():
+    mem = MemoryStore("data/memory.db")
+    io = CollectingIO()
+    life = DigitalLife(
+        xiami_state(), MockLLM(1), MockLLM(2), mem, io,
+        config=EngineConfig(),
+    )
+    result = await life.on_message("u1", "今天看到一只猫，长得特别像你")
+    print(result.reply, result.mood, result.ctx_tokens)
+    await life.close()
+
+asyncio.run(main())
+```
+
+### 7.2 接自己的 IM / 多模态
+
+实现两个口子即可：
+
+```python
+async def preprocess(raw: str) -> str:
+    # 图片/语音/表情包 → 文本
+    return raw
+
+class MyIO:
+    async def send(self, uid: str, text: str, knobs: dict):
+        await my_bot.send(uid, text, temperature=knobs["temperature"])
+
+config = EngineConfig(preprocess=preprocess)
+life = DigitalLife(st, small_llm, big_llm, mem, MyIO(), config=config)
+```
+
+`small_llm` / `big_llm` 既可以是 `OpenAICompatibleLLM`，也可以是任意
+`async def f(prompt, system=None, json_mode=False, temperature=None) -> str` 的函数。
+
+### 7.3 接真实夜间反思
+
+```python
+from digital_life.persona_evolution import nightly_reflect
+from digital_life.persistence import ObsidianReflector
+
+await nightly_reflect(
+    small_llm, st, mem,
+    reflector=ObsidianReflector(r"D:\note\digital life"),  # Obsidian 仓库路径，按实际修改
+    run_gc=True,
+)
+```
+
+---
+
+## 8. 测试
+
+```bash
+python -m pytest
+# 85 passed
+```
+
+覆盖：
+
+- `scaled`/decay 的 dt 连续性、threat 放大、mood 滞回
+- appraisal schema 校验与兜底
+- 四层 prompt 不含 PAD 数字、A 旋钮范围
+- 工作记忆双触发滚动、保头保尾、摘要压缩
+- 记忆按 uid 隔离、TTL、FTS/向量召回、多维合并去重
+- `sqlite-vec` 索引的写入/更新/删除，以及无扩展时的哈希回退
+- Ollama embedding 的新/旧 API、归一化、维度校验与换模型重建
+- 上下文 token 硬上限
+- 主动发言阈值/冷却/退避/pending
+- 安全禁句、危机与过度依赖识别
+- 人格漂移三约束、夜间反思落盘、记忆 GC
+- 引擎快慢循环、会话结算、状态持久化
+- 2 日端到端仿真五项断言
+
+---
+
+## 9. 已知边界
+
+- **模型分工**：Qwen3 1.7B 只适合做 small（appraisal / 念头 / 摘要）。把它当 Big 实测会复读、
+  答非所问、记不住称呼；不要用它承担主对话。
+- **DeepSeek 实测（2026-11-16）**：`DIGITAL_LIFE_API_KEY` 已配置在 Windows 机器级环境变量，
+  按 `small=qwen3:1.7b`、`big=deepseek-chat`、`embedding=bge-m3` 跑了 4 轮：
+
+  ```text
+  你：我叫阿暖。今天被老板骂了，有点难过。
+  她：阿暖啊，啧，被骂了就来我这儿找安慰，你这算盘打得挺响。
+
+  你：不过看到你我就好点了。
+  她：哦？我还能当止疼药使，这功能我自己都不知道
+
+  你：你还记得我叫什么吗？
+  她：阿暖啊，刚说完就考我，哈 记性没那么差
+
+  你：我今天是因为什么不开心的？
+  她：被老板骂了呗，啧，这记性还来考我
+  ```
+
+  4 轮都接住了上下文，名字和原因都记住了，单轮约 1.3～1.9 秒。说明链路和“小模型 + 大模型”
+  分工是成立的；主对话质量主要取决于 Big 模型。
+
+  本项目只读取 `DIGITAL_LIFE_API_KEY` / `DIGITAL_LIFE_BASE_URL` 等标准环境变量；不依赖任何宿主，
+  也不读取其他应用的账号凭证。
+- 没有内置 IM Bot 适配器；`io.OutboundIO` 是留给企微/TG/Discord/QQ 的接入口。
+- `sqlite-vec` 是索引层，embedding 由 `embedding.py` 提供：默认 `bge-m3`（1024 维，显存约 689MB），Ollama 没启动时 `auto` 会安静回退内置哈希，不会阻塞启动。Ollama 默认 `keep_alive=5m`，空闲后自动卸载，不是永久常驻；可用 `DIGITAL_LIFE_EMBED_KEEP_ALIVE` 调整，用 `ollama ps` 查看当前驻留模型。
+- `MockLLM` 是规则驱动的测试替身，不是人设模型；它的输出只用于验证链路，不代表最终“像人”的效果。
+- 仿真中的 `p_std` 与用户消息密度相关：`rho_P=0.03/60s` 让愉悦度回归很快，消息稀疏时 P 会长时间贴着基线，标准差自然变小；如果你要更强的情绪起伏，优先调 `k_P` / `wP`，而不是改断言。
+- 夜间反思与前台对话可能并发写 `LifeState`；当前引擎在夜间反思任务里没有整段持锁（避免长时间阻塞对话），极端并发下可能出现一次覆盖。生产多用户高频场景建议把反思放进独立进程或加一把专门的 `reflect_lock`。

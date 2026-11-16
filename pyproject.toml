@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digital-life"
+version = "0.1.0"
+description = "数字生命：情绪 / 驱力 / 记忆 / 人格的极简单体实现"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "digital_life" }]
+keywords = ["agent", "emotion", "PAD", "memory", "persona", "sqlite"]
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+vector = ["sqlite-vec>=0.1.9"]
+ollama = ["httpx>=0.24", "sqlite-vec>=0.1.9"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+digital-life = "digital_life.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["digital_life*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

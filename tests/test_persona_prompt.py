@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import random
+
+from digital_life.personas import (
+    CorePersona,
+    LifeState,
+    Relation,
+    XIAMI_CORE,
+    arousal_knobs,
+    build_system_prompt,
+    inner_monologue,
+    map_mood,
+    user_model_text,
+    xiami_state,
+)
+
+
+def test_mood_anchor_exact():
+    st = xiami_state()
+    st.P, st.A, st.D = 0.6, 0.6, 0.3
+    st.mood = "平静"
+    assert map_mood(st) == "开心"
+
+
+def test_mood_hysteresis_prevents_jitter():
+    st = xiami_state()
+    st.mood = "平静"
+    # 已经更靠近“无聊”，但差距不到 0.12，不切换
+    st.P, st.A, st.D = -0.02, 0.225, 0.0
+    assert map_mood(st) == "平静"
+    # 差距足够大才切换
+    st.P, st.A, st.D = -0.3, 0.15, 0.0
+    assert map_mood(st) == "无聊"
+
+
+def test_inner_monologue_intensity_and_dominance():
+    st = xiami_state()
+    st.mood = "开心"
+    st.P, st.D = 0.8, 0.5
+    text = inner_monologue(st)
+    assert "很" in text
+    assert "想带节奏" in text
+
+    st.P, st.D = 0.3, -0.5
+    text = inner_monologue(st)
+    assert "有点" in text
+    assert "有点缩着" in text
+
+
+def test_inner_monologue_does_not_double_prefix():
+    st = xiami_state()
+    st.mood = "低落"
+    st.P, st.D = -0.8, 0.0
+    text = inner_monologue(st)
+    assert "很蔫" in text
+    assert "有点蔫" not in text
+    assert "很有" not in text
+
+    st.P = -0.3
+    text = inner_monologue(st)
+    assert "有点蔫" in text
+    assert "有点有点" not in text
+
+
+def test_arousal_knobs_ranges():
+    st = xiami_state()
+    for _ in range(30):
+        k = arousal_knobs(st, random.Random(1))
+        assert 0.5 <= k["temperature"] <= 1.1
+        assert k["max_sentences"] in (1, 2, 3)
+        assert isinstance(k["split_bubbles"], bool)
+
+
+def test_build_system_prompt_has_four_layers_and_no_pad_numbers():
+    st = xiami_state()
+    rel = Relation()
+    rel.persona.nickname = "姐姐"
+    rel.persona.strategy = "别追问，先接话"
+    knobs = {
+        "temperature": 0.8,
+        "max_sentences": 2,
+        "split_bubbles": True,
+        "exclaim": True,
+        "emoji": False,
+    }
+    prompt, returned = build_system_prompt(st, rel, knobs=knobs)
+    assert returned is knobs
+    for block in ("【不变的你】", "【此刻的状态】", "【对这个人】", "【表达形式】"):
+        assert block in prompt
+    assert "姐姐" in prompt
+    assert "别追问，先接话" in prompt
+    assert "没心情发表情" in prompt
+    assert "P=" not in prompt and "A=" not in prompt and "D=" not in prompt
+    assert "不解释情绪" in prompt
+
+
+def test_xiami_core_is_locked_identity():
+    assert XIAMI_CORE.name == "夏弥"
+    assert "不勒索" in XIAMI_CORE.values
+    assert "在吗" in XIAMI_CORE.taboos
+    assert set(XIAMI_CORE.mood_behaviors) == {
+        "开心",
+        "兴奋",
+        "平静",
+        "无聊",
+        "低落",
+        "焦虑",
+        "委屈",
+        "烦躁",
+    }
+
+
+def test_default_core_has_generic_behaviors():
+    core = CorePersona()
+    assert core.mood_behaviors
+    st = LifeState(core=core)
+    assert "这会儿——" in inner_monologue(st)
+
+
+def test_user_model_text_is_lightweight():
+    rel = Relation()
+    rel.persona.nickname = "阿暖"
+    rel.profile.preferred_name = "暖暖"
+    rel.profile.notes = {"雷区": "家人", "在意的事": "龙卡"}
+    text = user_model_text(rel)
+    assert "阿暖" in text
+    assert "暖暖" in text
+    assert "家人" in text
+    assert "龙卡" in text
