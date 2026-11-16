@@ -70,6 +70,8 @@ class EngineConfig:
     vault_path: str | None = None
     log: Callable[[str], None] | None = None
     group_slang_every: int = 50
+    # 直接读 Markdown 的知识库（vault.VaultKB）；给了就优先于向量知识层
+    kb: Any = None
     # 会话结束更新画像的门槛：至少说了几条才值得花一次小模型调用
     profile_min_turns: int = 3
 
@@ -185,7 +187,9 @@ class DigitalLife:
         self._closed = False
 
         self.stats = EngineStats()
-        self.assembler = ContextAssembler(search_fn=self.config.search_fn)
+        self.assembler = ContextAssembler(
+            search_fn=self.config.search_fn, kb=self.config.kb
+        )
 
         if reflector is not None:
             self.reflector = reflector

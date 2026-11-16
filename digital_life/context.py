@@ -84,10 +84,13 @@ class ContextAssembler:
         self,
         *,
         search_fn: Callable[[str], Any] | None = None,
+        kb: Any | None = None,
         budget: dict[str, int] | None = None,
         max_tokens: int = MAX_CONTEXT_TOKENS,
     ) -> None:
         self.search_fn = search_fn
+        # 知识库直接读 Markdown 源文件；命中就不必再问向量库/联网
+        self.kb = kb
         self.budget = dict(BUDGET if budget is None else budget)
         self.max_tokens = max_tokens
 
@@ -124,7 +127,12 @@ class ContextAssembler:
         memory_text = format_recalled(recalled, self.budget["memory"])
 
         knowledge = ""
-        if small_llm is not None:
+        if self.kb is not None:
+            try:
+                knowledge = self.kb.context(user_msg)
+            except Exception:
+                knowledge = ""
+        if not knowledge and small_llm is not None:
             try:
                 knowledge = await maybe_fetch_knowledge(
                     small_llm,

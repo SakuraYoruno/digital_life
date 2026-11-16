@@ -303,6 +303,28 @@ def _csv(value: str | None) -> tuple[str, ...]:
     return tuple(part for part in value.replace(";", ",").replace(",", " ").split() if part)
 
 
+def _kb_root(args: argparse.Namespace, data_dir: Path) -> str:
+    """知识库目录：--kb > 环境变量 > <data_dir>/kb.path（UTF-8 一行）。
+
+    为什么不只靠环境变量：路径里有中文时，cmd 的 codepage 会把它啃掉，
+    `set DIGITAL_LIFE_KB=D:\\note\\digital life\\知识库` 到 Python 里就变成乱码，
+    表现为"知识库一直没加载"。写文件最稳。
+    """
+    if getattr(args, "kb", None):
+        return str(args.kb)
+    env = os.getenv("DIGITAL_LIFE_KB")
+    if env:
+        return env
+    marker = Path(data_dir) / "kb.path"
+    if marker.exists():
+        try:
+            text = marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        return text
+    return ""
+
+
 async def cmd_im(args: argparse.Namespace) -> int:
     try:
         import websockets  # noqa: F401  可选依赖，先探一下
@@ -349,6 +371,17 @@ async def cmd_im(args: argparse.Namespace) -> int:
     if args.no_vision:
         config.vision = False
 
+    kb_root = _kb_root(args, data_dir)
+    kb = None
+    if kb_root:
+        try:
+            from .vault import VaultKB
+
+            kb = VaultKB(kb_root)
+            print(f"知识库：{kb.size} 块（{kb_root}，直接读文件）")
+        except Exception as exc:  # noqa: BLE001 - 加载失败就当没有
+            print(f"（知识库加载失败，跳过：{type(exc).__name__}: {exc}）")
+
     search_kind = (args.search or os.getenv("DIGITAL_LIFE_SEARCH") or "off").lower()
     search_fn = make_search_fn(
         search_kind, proxy=os.getenv("DIGITAL_LIFE_SEARCH_PROXY")
@@ -379,6 +412,7 @@ async def cmd_im(args: argparse.Namespace) -> int:
             rng=None,
             vault_path=str(reflector.vault) if reflector else None,
             search_fn=search_fn,
+            kb=kb,
             tick_seconds=config.tick_seconds,
             # 常驻进程会被强杀（更新/重启），10 分钟一存太冒险：关系一丢，
             # 她连「这个人昨天刚聊过」都不记得，夜间反思也没对象可反思。
@@ -552,6 +586,11 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--sticker-prob", type=float, default=None, help="每条回复补一张表情包的概率")
     im.add_argument("--sticker-only-prob", type=float, default=None, help="群里不接话、只丢一张表情的概率")
     im.add_argument("--no-vision", action="store_true", help="关掉看图：收到的图只显示 [图片]/[表情包]")
+    im.add_argument(
+        "--kb",
+        default=None,
+        help="知识库目录或 .md 文件（直接读源文件，不往库里拷正文）",
+    )
     im.add_argument(
         "--search", choices=("off", "bing"), default=None,
         help="知识库没有时是否联网检索（默认 off，也可用 DIGITAL_LIFE_SEARCH）",
