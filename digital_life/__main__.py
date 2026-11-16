@@ -153,6 +153,11 @@ async def cmd_chat(args: argparse.Namespace) -> int:
 
 
 async def cmd_sim(args: argparse.Namespace) -> int:
+    # 仿真默认写自己的目录：和 im 共用 data/ 会把假用户灌进线上状态。
+    # 注意不能用 subparser.set_defaults 设 data_dir——argparse 的 parents 是
+    # 按引用共享 action 的，一改会把 chat/im/reflect 的默认值也带跑（真踩过）。
+    if str(args.data_dir) == str(_default_data_dir()):
+        args.data_dir = os.getenv("DIGITAL_LIFE_SIM_DIR") or "data/sim"
     # 仿真默认走哈希，保证可复现、且不会对 Ollama 发几百次请求；
     # 显式 --embed ollama 才启用真 embedding。
     backend = "hash" if args.embed == "auto" else args.embed
@@ -366,6 +371,9 @@ async def cmd_im(args: argparse.Namespace) -> int:
             vault_path=str(reflector.vault) if reflector else None,
             search_fn=None,
             tick_seconds=config.tick_seconds,
+            # 常驻进程会被强杀（更新/重启），10 分钟一存太冒险：关系一丢，
+            # 她连「这个人昨天刚聊过」都不记得，夜间反思也没对象可反思。
+            autosave_seconds=60.0,
         ),
         reflector=reflector,
     )
@@ -380,6 +388,7 @@ async def cmd_im(args: argparse.Namespace) -> int:
     )
     client.on_message = bridge.dispatch
 
+    print(f"[启动] state={state_path} 关系 {len(st.relations)} 个：{list(st.relations)[:6]}", flush=True)
     me = config.self_id or "（等 NapCat 报上来）"
     print(f"—— 数字生命 · {st.core.name} · QQ 通道 ——")
     print(f"机器人 QQ：{me}")
@@ -457,10 +466,9 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--days", type=int, default=7)
     sim.add_argument("--strict", action="store_true", help="断言失败时返回非零")
     sim.add_argument("--verbose", action="store_true")
-    # 仿真默认写自己的目录：和 im 共用 data/ 会把假用户的关系灌进线上状态。
-    sim.set_defaults(
-        func=cmd_sim, data_dir=os.getenv("DIGITAL_LIFE_SIM_DIR") or "data/sim"
-    )
+    # 默认目录在 cmd_sim 里改。**不要**在这里 set_defaults(data_dir=...)：
+    # argparse 的 parents 是按引用共享 action 的，改了会把 im/chat 的默认值一起带跑。
+    sim.set_defaults(func=cmd_sim)
 
     demo = sub.add_parser("demo", parents=[common], help="一分钟演示")
     demo.set_defaults(func=cmd_demo)
