@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 146 个单元/集成测试
+├── tests/                    # 147 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -441,6 +441,8 @@ python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --pr
 - **群聊共享时间线**：每群保留最近 60 条（谁说的、说了什么、什么时候），回复时取最近 8 条做【群里刚才】。
   所以 A 说一句、B 接话时她也知道 A 说了什么——工作记忆是按 uid 分的，没有这块她接不住别人的话头。
 - **她认人**：群里第一次见到某人，就把 QQ 显示名记成「她对你的称呼」，prompt 里写明"这条消息来自「小虾米」"。
+- **她会拒绝**：`CorePersona.refusal_style` 给了她一条拒绝通道——顺手的小事照做，费劲/被当工具使就直接说不。
+  拒绝时**豁免「最后一句留钩子」那条规矩**，否则反问一句就等于把活接回来了。底气跟 D 维走：占上风时一句就够，缩着时会先笑一下再说不。
 - **画像在会话结束时更新**：聊满 3 句（`profile_min_turns`）才触发一次小模型提炼（称呼/雷区/作息），
   不再只等凌晨那一次——下次开口就能用上。
 - **出站不串台**：私聊回复落到私聊、群回复落到同一个群，靠 `contextvars` 绑定当前这一轮，并发用户互不影响。
@@ -550,7 +552,7 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 ```bash
 python -m pytest
-# 146 passed
+# 147 passed
 ```
 
 覆盖：

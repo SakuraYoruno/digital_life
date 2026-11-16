@@ -127,6 +127,8 @@ class CorePersona:
     relationships: str = ""
     # 怎么说话：口头禅、句式、绝不做的事。
     voice_rules: list[str] = field(default_factory=list)
+    # 不想做一件事时怎么拒绝。留空 = 没有拒绝通道，只能绕。
+    refusal_style: str = ""
 
     def __post_init__(self) -> None:
         if not self.mood_behaviors:
@@ -150,6 +152,7 @@ class CorePersona:
             "background": self.background,
             "relationships": self.relationships,
             "voice_rules": list(self.voice_rules),
+            "refusal_style": self.refusal_style,
         }
 
     @classmethod
@@ -178,6 +181,7 @@ class CorePersona:
             background=str(data.get("background", "")),
             relationships=str(data.get("relationships", "")),
             voice_rules=[str(x) for x in (data.get("voice_rules") or [])],
+            refusal_style=str(data.get("refusal_style", "")),
         )
 
 
@@ -714,6 +718,17 @@ def build_system_prompt(
     if st.core.voice_rules:
         voice = "".join(f"- {rule}\n" for rule in st.core.voice_rules)
 
+    refusal = ""
+    if st.core.refusal_style:
+        # 拒绝的底气跟着 D 维走：占上风时更干脆，缩着时会先笑一下再说不。
+        if st.D > 0.2:
+            mood_hint = "这会儿你占着上风，拒绝可以更干脆，一句就够。"
+        elif st.D < -0.2:
+            mood_hint = "这会儿你有点缩着，拒绝会先笑一下，但结果还是「不」。"
+        else:
+            mood_hint = "拒绝时不解释、不道歉、不补一句「不过我可以…」。"
+        refusal = f"【接不接】\n{st.core.refusal_style.strip()}\n{mood_hint}\n\n"
+
     prompt = f"""{identity}【不变的你】
 {st.core.style_skeleton}
 价值观底线：{st.core.values}
@@ -726,7 +741,7 @@ def build_system_prompt(
 {speaker_line}称呼“{rel.persona.nickname or '你'}”，{rel.persona.strategy or '随意聊'}
 {behavior_bias_text(rel)}{support}
 
-{examples}【表达形式】
+{examples}{refusal}【表达形式】
 {tone}
 最多{k['max_sentences']}句话，最后一句得留个钩子（反问 / 抬杠 / 翻旧账都行），别把话头扔地上
 嘴硬可以，但刺完要接住人——刺是嘴硬的刺，不是把人推开的刺
@@ -857,6 +872,13 @@ XIAMI_CORE = CorePersona(
         ("你好笨啊", "我笨？\n再说一遍试试"),
         ("你喜欢谁啊", "这个嘛——秘密\n问这么细干嘛"),
     ],
+    refusal_style=(
+        "对方让你做事，先掂量：顺手的小事（递句话、报个天气、记个名字）别端架子，该做就做；"
+        "费劲的、没意思的、把你当工具使的，直接说「不写」「不去」「不干」，一句话说完就停。"
+        "拒绝可以带着笑说，但不是软化——说完就是说完，不许改口，也不许补一句「不过我可以…」。"
+        "拒绝的时候**不用**守「最后一句留钩子」那条规矩：别再反问「你想让谁活过来」把活儿接回去，"
+        "反问一句就等于答应了。要拒就干干净净地拒，天不会塌。"
+    ),
 )
 
 XIAMI_PLASTIC = PlasticPersona(

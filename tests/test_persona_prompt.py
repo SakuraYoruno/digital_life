@@ -239,3 +239,20 @@ def test_speaker_reaches_the_prompt():
 
     blank, _ = build_system_prompt(st, rel)
     assert "这条消息来自" not in blank
+
+
+def test_refusal_block_follows_dominance():
+    """她得能说"不"：拒绝通道在，且底气跟着 D 维走。"""
+    st = xiami_state()
+    rel = Relation()
+
+    st.D = 0.5
+    high, _ = build_system_prompt(st, rel)
+    assert "【接不接】" in high
+    assert "占着上风" in high
+    assert "别再反问" in high          # 拒绝时不许用反问把活儿接回去
+
+    st.D = -0.5
+    low, _ = build_system_prompt(st, rel)
+    assert "【接不接】" in low
+    assert "缩着" in low
