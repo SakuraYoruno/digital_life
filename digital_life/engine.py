@@ -284,6 +284,7 @@ class DigitalLife:
         *,
         now: float | None = None,
         speak: bool = True,
+        speaker: str = "",
     ) -> MessageResult:
         """处理一条消息。
 
@@ -373,6 +374,11 @@ class DigitalLife:
                     apply_dependency_protection(rel, risk, now)
                 support_kind = self._active_support(uid, now)
 
+                # 群聊里第一次见到这个人，就把显示名记成"她对你的称呼"，
+                # 免得下次还要靠上下文猜"刚才那个小虾米是谁"。
+                if speaker and not rel.persona.nickname:
+                    rel.persona.nickname = str(speaker)[:16]
+
                 knobs = arousal_knobs(self.st, self.rng)
                 sys_prompt, knobs = build_system_prompt(
                     self.st,
@@ -380,6 +386,7 @@ class DigitalLife:
                     knobs=knobs,
                     self_narrative=self.st.self_narrative,
                     support_note=support_note(support_kind) if support_kind else "",
+                    speaker=speaker,
                 )
                 mood = self.st.mood
                 summary = rel.session_summary

@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 139 个单元/集成测试
+├── tests/                    # 141 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -545,7 +545,7 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 ```bash
 python -m pytest
-# 139 passed
+# 141 passed
 ```
 
 覆盖：

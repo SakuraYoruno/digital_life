@@ -805,7 +805,10 @@ class OneBotBridge:
             )
             try:
                 result = await self.engine.on_message(
-                    message.user_id, text, message.group_id
+                    message.user_id,
+                    text,
+                    message.group_id,
+                    speaker=message.sender_name,
                 )
             except Exception as exc:  # noqa: BLE001 - 单条消息出错不能拖垮整条链路
                 self.log(f"[onebot] 处理 {who}（{where}）失败：{type(exc).__name__}: {exc}")

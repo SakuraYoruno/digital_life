@@ -12,6 +12,7 @@ from digital_life.io import split_bubbles
 from digital_life.llm import MockLLM
 from digital_life.memory import MemoryStore
 from digital_life.onebot import (
+    IncomingMessage,
     OneBotBridge,
     OneBotClient,
     OneBotConfig,
@@ -510,3 +511,25 @@ def test_e2e_ambient_group_can_chime_in():
         assert str(received[0]["params"]["message"][0]["data"]["qq"]) == "222"
 
     asyncio.run(run())
+
+
+class _SpeakerRecorder:
+    def __init__(self):
+        self.calls = []
+
+    async def on_message(self, uid, text, group_id=None, **kwargs):
+        self.calls.append((uid, text, group_id, kwargs))
+        from types import SimpleNamespace
+        return SimpleNamespace(reply="", blocked=False)
+
+
+def test_bridge_passes_speaker_name():
+    engine = _SpeakerRecorder()
+    bridge = OneBotBridge(
+        engine, OneBotConfig(group_mode="open"), log=lambda line: None
+    )
+    message = IncomingMessage(
+        user_id="222", text="今天好热", group_id="555", sender_name="小虾米"
+    )
+    asyncio.run(bridge.handle(message))
+    assert engine.calls[0][3].get("speaker") == "小虾米"

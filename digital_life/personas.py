@@ -679,10 +679,13 @@ def build_system_prompt(
     knobs: dict[str, Any] | None = None,
     self_narrative: str | None = None,
     support_note: str = "",
+    speaker: str = "",
 ) -> tuple[str, dict[str, Any]]:
     """四层分块 + 身份自述。返回 (prompt, knobs)。
 
     数字永远不出现在给主模型的 prompt 里；A 维只改旋钮。
+    `speaker` 是这条消息的发言人显示名（群聊里尤其重要：
+    没有它，她只知道"有个人在说话"，不知道是谁）。
     """
     k = knobs or arousal_knobs(st)
     k["mood"] = st.mood  # 给出站 IO 用：表情包按当前情绪挑
@@ -696,6 +699,7 @@ def build_system_prompt(
     identity += "\n\n"
 
     support = f"\n{support_note}" if support_note else ""
+    speaker_line = f"这条消息来自「{speaker}」。\n" if speaker else ""
     examples = ""
     if st.core.speech_examples:
         samples = "\n\n".join(
@@ -719,7 +723,7 @@ def build_system_prompt(
 （以上是此刻的倾向，不是绝对命令——遇到冲突时，价值观底线永远优先）
 
 【对这个人】
-称呼“{rel.persona.nickname or '你'}”，{rel.persona.strategy or '随意聊'}
+{speaker_line}称呼“{rel.persona.nickname or '你'}”，{rel.persona.strategy or '随意聊'}
 {behavior_bias_text(rel)}{support}
 
 {examples}【表达形式】

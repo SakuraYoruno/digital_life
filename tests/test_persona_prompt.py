@@ -227,3 +227,15 @@ def test_saved_state_takes_dynamics_constants_from_code(tmp_path):
     assert loaded.plastic.lam["bond"] == pytest.approx(0.006)   # 用代码里的新常数
     assert loaded.plastic.P0 == pytest.approx(0.35)             # 养成的值保留
     reopened.close()
+
+
+def test_speaker_reaches_the_prompt():
+    """群聊里必须知道"谁在说话"，否则她只能对着一个匿名的"你"。"""
+    st = xiami_state()
+    rel = Relation()
+    prompt, _ = build_system_prompt(st, rel, speaker="小虾米")
+    assert "小虾米" in prompt
+    assert "这条消息来自「小虾米」" in prompt
+
+    blank, _ = build_system_prompt(st, rel)
+    assert "这条消息来自" not in blank
