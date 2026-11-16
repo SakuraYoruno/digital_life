@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 115 个单元/集成测试
+├── tests/                    # 130 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -471,13 +471,42 @@ python -m pytest tests/test_onebot.py     # 内置假 OneBot 服务端，跑通"
 
 调参建议：群里人少、聊得慢，把 `--group-prob` 提到 0.15～0.2；群里热闹、怕她烦人，就降到 0.03 并把冷却拉到 600。
 
+### 8.7 表情包与看图
+
+两件事，用的是同一个多模态端点：
+
+**收到图**：`vision.py` 把图片交给主模型看一眼，换成一句人话再进管线。
+
+```
+你：[表情包]
+她：（模型看到"戴帽金发小人一脸生无可恋，写着失望"）
+    哟，这表情包是在说我呢？帽子借我戴戴呗
+```
+
+- 只在**真要开口**时才看：旁听的消息不花这次调用
+- 同一张图按内容 sha256 缓存，重复表情包不重复付费
+- 看不了就退回 `[图片]` / `[表情包]` 占位，不影响消息处理
+- 图片地址优先用 OneBot 给的 `url`，拿不到再用本地路径
+
+**发图**：`sticker.py` 从本地目录按当前 mood 挑一张，跟在文字后面发。
+
+- 目录里每张图的可选描述（`{path, summary}` 列表）就是标签，拿 mood 关键词去撞：
+  `"低落"` 会挑出 `"生无可恋只想躺平"` 这种
+- 撞不上就随机，但会避开最近发过的 8 张
+- 发的是 `file:///` 绝对路径；**中文目录不做 percent-encoding**，否则某些 NapCat 版本解不出来
+
+```powershell
+python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --group-mode ambient
+# 描述文件用环境变量给：DIGITAL_LIFE_QQ_STICKER_META=D:\DSH-QQ\表情包收藏.json
+```
+
 ---
 
 ## 9. 测试
 
 ```bash
 python -m pytest
-# 115 passed
+# 130 passed
 ```
 
 覆盖：

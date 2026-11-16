@@ -101,6 +101,39 @@ class OpenAICompatibleLLM:
                 timeout=60.0,
             )
 
+    async def vision(
+        self,
+        prompt: str,
+        image_url: str,
+        *,
+        max_tokens: int = 120,
+        temperature: float = 0.3,
+    ) -> str:
+        """让模型看一眼图，返回一段描述（OpenAI 兼容的多模态 content 数组）。
+
+        DeepSeek / GPT / 本地 vLLM 的多模态端点都吃这个形状；
+        纯文本模型会返回 400，调用方按"看不了图"处理即可。
+        """
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        ]
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+        resp = await self._client.chat.completions.create(**kwargs)
+        return (resp.choices[0].message.content or "").strip()
+
     async def complete(
         self,
         prompt: str,

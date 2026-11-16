@@ -63,6 +63,13 @@ class OneBotConfig:
     group_reply_prob: float = 0.06
     group_cooldown: float = 180.0
     group_names: tuple[str, ...] = ("夏弥", "小龙女", "虾米")
+    # 表情包：目录 + 可选描述文件 + 每条回复补一张图的概率
+    sticker_dir: str = ""
+    sticker_meta: str = ""
+    sticker_prob: float = 0.15
+    sticker_delay: float = 0.8
+    # 收到图片时用多模态模型看一眼（关掉就只显示 [图片]/[表情包]）
+    vision: bool = True
     # 打开后会把"旁听"的群消息也打日志，方便确认她到底有没有在听
     verbose: bool = False
     command_prefix: str = "/"
@@ -104,6 +111,11 @@ def config_from_env(env: dict[str, str] | None = None) -> OneBotConfig:
         group_cooldown=float(e.get("DIGITAL_LIFE_QQ_GROUP_COOLDOWN") or 180.0),
         group_names=_split_csv(e.get("DIGITAL_LIFE_QQ_GROUP_NAMES")) or ("夏弥", "小龙女", "虾米"),
         verbose=(e.get("DIGITAL_LIFE_QQ_VERBOSE") or "") in ("1", "true", "True", "on"),
+        sticker_dir=e.get("DIGITAL_LIFE_QQ_STICKERS") or "",
+        sticker_meta=e.get("DIGITAL_LIFE_QQ_STICKER_META") or "",
+        sticker_prob=float(e.get("DIGITAL_LIFE_QQ_STICKER_PROB") or 0.15),
+        sticker_delay=float(e.get("DIGITAL_LIFE_QQ_STICKER_DELAY") or 0.8),
+        vision=(e.get("DIGITAL_LIFE_QQ_VISION") or "1") not in ("0", "false", "False", "off"),
         command_prefix=e.get("DIGITAL_LIFE_QQ_PREFIX") or "/",
         at_reply=(e.get("DIGITAL_LIFE_QQ_AT_REPLY") or "1") not in ("0", "false", "False"),
         bubble_interval=float(e.get("DIGITAL_LIFE_QQ_BUBBLE_INTERVAL") or 0.6),
@@ -128,6 +140,7 @@ class IncomingMessage:
     message_id: str = ""
     at_me: bool = False
     sender_name: str = ""
+    images: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -136,9 +149,8 @@ class IncomingMessage:
 
 
 _SEGMENT_LABELS = {
-    "image": "[图片]",
-    "face": "[表情]",
-    "mface": "[表情]",
+    "face": "[QQ表情]",
+    "mface": "[表情包]",
     "record": "[语音]",
     "video": "[视频]",
     "file": "[文件]",
@@ -165,6 +177,8 @@ def _cq_to_text(message: str) -> str:
             qq = re.search(r"qq=([^,\]]+)", params)
             target = qq.group(1) if qq else ""
             return "@全体成员" if target == "all" else f"@{target}"
+        if name == "image":
+            return "[表情包]" if "sub_type=1" in params or "表情" in params else "[图片]"
         return _SEGMENT_LABELS.get(name, "")
 
     return _RE_CQ.sub(repl, message)
@@ -197,6 +211,11 @@ def segments_to_text(message: Any) -> str:
                 pieces.append("@全体成员")
             else:
                 pieces.append(f"@{data.get('name') or qq}")
+        elif kind == "image":
+            summary = str(data.get("summary") or "")
+            # sub_type=1 是 QQ 的"动画表情"，也就是表情包
+            sticker = str(data.get("sub_type")) == "1" or "表情" in summary
+            pieces.append("[表情包]" if sticker else "[图片]")
         else:
             label = _SEGMENT_LABELS.get(kind, f"[{kind}]")
             if label:
@@ -216,6 +235,21 @@ def _mentions(message: Any, self_id: str) -> bool:
                 if str((seg.get("data") or {}).get("qq") or "") == str(self_id):
                     return True
     return False
+
+
+def _image_sources(message: Any) -> tuple[str, ...]:
+    """把消息里的图片找出来：优先用 url（NapCat 可直接下载），退而用本地 file。"""
+    if not isinstance(message, list):
+        return ()
+    sources: list[str] = []
+    for seg in message:
+        if not isinstance(seg, dict) or seg.get("type") != "image":
+            continue
+        data = seg.get("data") or {}
+        source = str(data.get("url") or data.get("file") or "")
+        if source:
+            sources.append(source)
+    return tuple(sources)
 
 
 def parse_event(event: dict[str, Any], self_id: str = "") -> IncomingMessage | None:
@@ -253,6 +287,7 @@ def parse_event(event: dict[str, Any], self_id: str = "") -> IncomingMessage | N
             or (sender.get("nickname") if isinstance(sender, dict) else "")
             or ""
         ),
+        images=_image_sources(event.get("message")),
         raw=event,
     )
 
@@ -457,11 +492,24 @@ class OneBotClient:
 
 
 class OneBotIO:
-    """`io.OutboundIO` 的 QQ 实现：按 A 维旋钮切气泡，逐条发出。"""
+    """`io.OutboundIO` 的 QQ 实现：按 A 维旋钮切气泡，逐条发出。
 
-    def __init__(self, client: OneBotClient, config: OneBotConfig | None = None) -> None:
+    如果挂了表情包库，还会按概率在文字后面补一张图——表情包是"语气"，
+    不是内容，所以不参与文字生成，只在发送时按 mood 挑。
+    """
+
+    def __init__(
+        self,
+        client: OneBotClient,
+        config: OneBotConfig | None = None,
+        *,
+        stickers: Any | None = None,
+        rng: random.Random | None = None,
+    ) -> None:
         self.client = client
         self.config = config or client.config
+        self.stickers = stickers
+        self.rng = rng or random.Random()
 
     async def send(self, uid: str, text: str, knobs: dict[str, Any] | None = None) -> None:
         knobs = knobs or {}
@@ -495,6 +543,30 @@ class OneBotIO:
             if index + 1 < total:
                 await asyncio.sleep(max(0.0, self.config.bubble_interval))
 
+        await self._maybe_sticker(uid, group_id, knobs)
+
+    async def _maybe_sticker(
+        self, uid: str, group_id: str | None, knobs: dict[str, Any]
+    ) -> None:
+        if self.stickers is None or self.config.sticker_prob <= 0:
+            return
+        if self.rng.random() >= self.config.sticker_prob:
+            return
+        sticker = self.stickers.pick(str(knobs.get("mood") or ""))
+        if sticker is None:
+            return
+        await asyncio.sleep(max(0.0, self.config.sticker_delay))
+        segments = [{"type": "image", "data": {"file": sticker.file_url}}]
+        try:
+            if group_id is not None:
+                await self.client.send_group(group_id, segments)
+            else:
+                await self.client.send_private(uid, segments)
+        except OneBotError as exc:
+            self.client.log(f"[onebot] 表情包发送失败：{exc}")
+            return
+        self.client.log(f"[onebot] 补了一张表情包：{sticker.path}（{sticker.summary or '无描述'}）")
+
 
 # ---------------------------------------------------------------------------
 # 桥接：过滤 → 引擎 → 出站
@@ -518,11 +590,18 @@ class OneBotBridge:
         *,
         log: Callable[[str], None] | None = None,
         rng: random.Random | None = None,
+        describer: Any | None = None,
     ) -> None:
         self.engine = engine
         self.config = config or config_from_env()
         self.log = log or (lambda line: print(line, flush=True))
         self.rng = rng or random.Random()
+        self.describer = describer
+        self._see_images = bool(
+            describer is not None
+            and self.config.vision
+            and getattr(describer, "available", False)
+        )
         self._sem = asyncio.Semaphore(max(1, self.config.concurrency))
         self._tasks: set[asyncio.Task[Any]] = set()
         self._last_group_reply: dict[str, float] = {}
@@ -592,6 +671,16 @@ class OneBotBridge:
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
+    async def _describe_images(self, message: IncomingMessage, text: str) -> str:
+        """把 [图片]/[表情包] 换成"她看到的东西"。只在真要开口时才花这次调用。"""
+        description = await self.describer.describe(message.images[0])
+        if not description:
+            return text
+        for placeholder in ("[表情包]", "[图片]"):
+            if placeholder in text:
+                return text.replace(placeholder, f"{placeholder[:-1]}：{description}]", 1)
+        return f"{text}（对方还发了一张图：{description}）"
+
     async def _observe(self, message: IncomingMessage, text: str) -> None:
         """只听不说：让她记住群里聊了什么，但不生成、不发送。"""
         if self.config.verbose:
@@ -638,6 +727,8 @@ class OneBotBridge:
 
         who = message.sender_name or message.user_id
         where = f"群{message.group_id}" if message.is_group else "私聊"
+        if self._see_images and message.images:
+            text = await self._describe_images(message, text)
         self.log(f"[onebot] ← {who}（{where}）：{text}")
         async with self._sem:
             token = _target.set(

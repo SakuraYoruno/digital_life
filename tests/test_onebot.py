@@ -36,7 +36,7 @@ def test_segments_to_text_array():
         {"type": "image", "data": {"file": "a.jpg"}},
         {"type": "face", "data": {"id": "1"}},
     ]
-    assert segments_to_text(message) == "@阿暖 你看这个[图片][表情]"
+    assert segments_to_text(message) == "@阿暖 你看这个[图片][QQ表情]"
 
 
 def test_segments_to_text_cq_string():

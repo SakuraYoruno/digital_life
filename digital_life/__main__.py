@@ -30,6 +30,7 @@ from .persona_evolution import memory_gc, nightly_reflect
 from .persistence import ObsidianReflector, StateStore
 from .personas import default_state, xiami_state
 from .simulation import FakeClock, run_simulation
+from .vision import ImageDescriber
 
 
 def _default_data_dir() -> Path:
@@ -332,9 +333,24 @@ async def cmd_im(args: argparse.Namespace) -> int:
         config.group_cooldown = args.group_cooldown
     if args.single_message:
         config.split_bubbles = False
+    if args.stickers:
+        config.sticker_dir = args.stickers
+    if args.sticker_prob is not None:
+        config.sticker_prob = args.sticker_prob
+    if args.no_vision:
+        config.vision = False
 
     client = OneBotClient(config)
-    io = OneBotIO(client, config)
+    stickers = None
+    if config.sticker_dir:
+        try:
+            from .sticker import StickerBook
+
+            stickers = StickerBook(config.sticker_dir, metadata_path=config.sticker_meta or None)
+            print(f"表情包库：{stickers.size} 张（{config.sticker_dir}）")
+        except Exception as exc:  # noqa: BLE001 - 加载失败就当没有
+            print(f"（表情包库加载失败，跳过：{type(exc).__name__}: {exc}）")
+    io = OneBotIO(client, config, stickers=stickers)
     engine = DigitalLife(
         st,
         small,
@@ -351,7 +367,10 @@ async def cmd_im(args: argparse.Namespace) -> int:
         ),
         reflector=reflector,
     )
-    bridge = OneBotBridge(engine, config)
+    describer = ImageDescriber(big) if config.vision else None
+    if describer is not None and not describer.available:
+        describer = None
+    bridge = OneBotBridge(engine, config, describer=describer)
     client.on_message = bridge.dispatch
 
     me = config.self_id or "（等 NapCat 报上来）"
@@ -460,6 +479,9 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--group-allow", default=None, help="群白名单，逗号分隔的群号，留空=不限制")
     im.add_argument("--group-prob", type=float, default=None, help="ambient 模式下每条群消息的接话概率")
     im.add_argument("--group-cooldown", type=float, default=None, help="ambient 模式下两次接话的最小间隔（秒）")
+    im.add_argument("--stickers", default=None, help="表情包目录，给了才会发表情包")
+    im.add_argument("--sticker-prob", type=float, default=None, help="每条回复补一张表情包的概率")
+    im.add_argument("--no-vision", action="store_true", help="关掉看图：收到的图只显示 [图片]/[表情包]")
     im.add_argument(
         "--single-message",
         action="store_true",

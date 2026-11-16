@@ -641,6 +641,7 @@ def build_system_prompt(
     数字永远不出现在给主模型的 prompt 里；A 维只改旋钮。
     """
     k = knobs or arousal_knobs(st)
+    k["mood"] = st.mood  # 给出站 IO 用：表情包按当前情绪挑
     behavior = st.core.mood_behaviors.get(st.mood)
     tone = behavior.tone_note if behavior else "语气自然"
     narrative = (self_narrative if self_narrative is not None else st.self_narrative).strip()
