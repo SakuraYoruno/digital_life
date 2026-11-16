@@ -61,6 +61,9 @@ class OneBotConfig:
     command_prefix: str = "/"
     at_reply: bool = True
     bubble_interval: float = 0.6
+    # True：她一句话分成两口气时按两条消息发（更像真人连发）
+    # False：并成一条，中间的换行折成逗号
+    split_bubbles: bool = True
     tick_seconds: float = 60.0
     concurrency: int = 4
 
@@ -93,6 +96,7 @@ def config_from_env(env: dict[str, str] | None = None) -> OneBotConfig:
         command_prefix=e.get("DIGITAL_LIFE_QQ_PREFIX") or "/",
         at_reply=(e.get("DIGITAL_LIFE_QQ_AT_REPLY") or "1") not in ("0", "false", "False"),
         bubble_interval=float(e.get("DIGITAL_LIFE_QQ_BUBBLE_INTERVAL") or 0.6),
+        split_bubbles=(e.get("DIGITAL_LIFE_QQ_SPLIT") or "1") not in ("0", "false", "False", "off"),
         tick_seconds=float(e.get("DIGITAL_LIFE_QQ_TICK") or 60.0),
         concurrency=int(e.get("DIGITAL_LIFE_QQ_CONCURRENCY") or 4),
     )
@@ -450,6 +454,9 @@ class OneBotIO:
 
     async def send(self, uid: str, text: str, knobs: dict[str, Any] | None = None) -> None:
         knobs = knobs or {}
+        if not self.config.split_bubbles:
+            # 并成一条：把模型自己断的行折成逗号，别在气泡里留个突兀的换行。
+            text = re.sub(r"[ \t]*\n+[ \t]*", "，", text.strip())
         bubbles = split_bubbles(text, knobs)
         if not bubbles:
             return

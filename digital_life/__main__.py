@@ -327,6 +327,8 @@ async def cmd_im(args: argparse.Namespace) -> int:
         config.group_mode = args.group_mode
     if args.group_allow is not None:
         config.group_allow = _csv(args.group_allow)
+    if args.single_message:
+        config.split_bubbles = False
 
     client = OneBotClient(config)
     io = OneBotIO(client, config)
@@ -453,6 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="群聊策略：off 不接 / mention 被 @ 或带前缀才接 / open 群里什么都接",
     )
     im.add_argument("--group-allow", default=None, help="群白名单，逗号分隔的群号，留空=不限制")
+    im.add_argument(
+        "--single-message",
+        action="store_true",
+        help="她一句话分两口气时并成一条发（默认按两条气泡发，更像真人）",
+    )
     im.set_defaults(func=cmd_im)
     return parser
 

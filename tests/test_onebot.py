@@ -175,6 +175,59 @@ def test_split_bubbles_still_used_by_io():
 
 
 # ---------------------------------------------------------------------------
+# 出站：两条气泡 vs 并成一条
+# ---------------------------------------------------------------------------
+
+
+class _FakeClient:
+    """只记录发出去什么，不碰网络。"""
+
+    def __init__(self, config: OneBotConfig) -> None:
+        self.config = config
+        self.sent: list[tuple] = []
+
+    def log(self, line: str) -> None:
+        pass
+
+    async def send_private(self, uid, message):
+        self.sent.append(("private", uid, message))
+        return {}
+
+    async def send_group(self, gid, message):
+        self.sent.append(("group", gid, message))
+        return {}
+
+
+def test_io_splits_newlines_into_two_bubbles_by_default():
+    config = OneBotConfig(bubble_interval=0)
+    client = _FakeClient(config)
+    io = OneBotIO(client, config)
+
+    asyncio.run(io.send("222", "嗯哼，叫我干嘛\n这么突然，有事？", {}))
+
+    assert len(client.sent) == 2
+    assert client.sent[0][2][0]["data"]["text"] == "嗯哼，叫我干嘛"
+    assert client.sent[1][2][0]["data"]["text"] == "这么突然，有事？"
+
+
+def test_io_single_message_mode_folds_newlines():
+    config = OneBotConfig(split_bubbles=False, bubble_interval=0)
+    client = _FakeClient(config)
+    io = OneBotIO(client, config)
+
+    asyncio.run(io.send("222", "嗯哼，叫我干嘛\n这么突然，有事？", {}))
+
+    assert len(client.sent) == 1
+    assert client.sent[0][2][0]["data"]["text"] == "嗯哼，叫我干嘛，这么突然，有事？"
+
+
+def test_config_split_flag_from_env():
+    assert config_from_env({"DIGITAL_LIFE_QQ_SPLIT": "0"}).split_bubbles is False
+    assert config_from_env({"DIGITAL_LIFE_QQ_SPLIT": "1"}).split_bubbles is True
+    assert config_from_env({}).split_bubbles is True
+
+
+# ---------------------------------------------------------------------------
 # 端到端：假 OneBot 服务端 ↔ 客户端 ↔ 引擎
 # ---------------------------------------------------------------------------
 

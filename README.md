@@ -404,13 +404,14 @@ python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --pr
 | `--group-allow` | `DIGITAL_LIFE_QQ_GROUP_ALLOW` | 空 | 逗号分隔的群号；空=所有群 |
 | — | `DIGITAL_LIFE_QQ_PREFIX` | `/` | 群里不带 @ 也能触发的前缀，置空则只认 @ |
 | — | `DIGITAL_LIFE_QQ_BUBBLE_INTERVAL` | `0.6` | 多条气泡之间的间隔秒数 |
+| `--single-message` | `DIGITAL_LIFE_QQ_SPLIT` | `1` | 她一句话分两口气时按两条气泡发；`0` 或 `--single-message` 并成一条 |
 | — | `DIGITAL_LIFE_QQ_TICK` | `60` | 慢循环（念头/主动发言）节拍 |
 
 ### 8.3 行为约定
 
 - **私聊**：`allowlist` 只接白名单；`open` 谁都接（只建议在自己机器上、别人够不着时用）。
 - **群聊**：`mention` 只接"被 @ "或"以 `/` 开头"的消息，回复的第一条会 @ 回对方。
-- **一条回复几口气**：仍由 `io.split_bubbles` 按 A 维旋钮切气泡，逐条发，间隔 `bubble_interval` 秒。
+- **一条回复几口气**：模型用换行断开的句子**按气泡逐条发**（间隔 `bubble_interval` 秒），像真人连发；A 维旋钮要求时再按句末标点继续拆。`--single-message` 则并成一条、换行折成逗号。
 - **记忆按 QQ 号隔离**：`uid` 就是 QQ 号；群里说话同样记在这个人名下，`group_id` 只参与群语境。
 - **出站不串台**：私聊回复落到私聊、群回复落到同一个群，靠 `contextvars` 绑定当前这一轮，并发用户互不影响。
 - **主动发言**：慢循环里"她"想找人说话时走私聊；非 QQ 号的 uid（例如 chat 里的 `owner`）会被跳过并记日志，不会误发。
