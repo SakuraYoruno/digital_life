@@ -277,36 +277,16 @@ digital_life/
 > 注意：`sim` 现在默认写 `data/sim/`，不要和线上 `im` 共用 `data/`——否则仿真里的
 > `u:warm` 这类假用户会被写进真实状态，机器人会去给不存在的人发主动消息。
 
-### 4.3 存储在哪：SQLite 是本体，Obsidian 是镜子
-
-经常被误会成"记忆存在 Obsidian 里"，其实是两套东西：
-
-| 存哪 | 存什么 | 谁读写 |
-|---|---|---|
-| data/memory.db | 七层记忆正文、FTS5 全文索引、vec0 向量索引 | 运行时**唯一真源**，每次开口都从这里召回 |
-| data/state.db | PAD、驱力、关系、人格（单行快照） | 同上，重启后靠它恢复 |
-| <vault>/数字生命/ | 反思日记、自我叙事、关系图谱（.md） | **只写不读**，给人看的 |
-
-Obsidian 那边由 ObsidianReflector 写三样东西：反思/YYYY-MM-DD.md、自我叙事.md、关系图谱.md。
-它不是运行时数据源——删掉整个 vault，她照样记得你，只是没有可翻的日记。
-
-要用它得显式给仓库路径（--vault 或 DIGITAL_LIFE_VAULT），否则 eflector=None，一行都不会写。
-启动参数里已经带上 --vault "D:\note\digital life"，所以从今晚 2 点的夜间反思开始才会真的落盘。
-
-> 踩过的坑：给 sim 子命令用 set_defaults(data_dir=...) 换默认目录是**错的**——
-> argparse 的 parents 按引用共享 action，一改会把 im/chat 的默认目录一起带跑，
-> 结果机器人一直在读写 data/sim/，仿真里的假用户 u:warm 被当成真人去主动搭话。
-> 现在改为在 cmd_sim 里判断，并加了一行启动日志打印实际使用的 state 路径。
 ### 4.2 记忆库的体积：vec0 的 chunk
 
-体检时发现 memory.db 长到 **40MB**，但里面只有 24 条记忆。根因不是数据，是索引预分配：
+体检时发现 `memory.db` 长到 **40MB**，但里面只有 24 条记忆。根因不是数据，是索引预分配：
 
-`vec0` 的每个分区按 chunk 预分配，默认 chunk_size=1024 条向量；1024 维 float32 下
-**每条 4KB，一个 chunk 就是 4MB**。而索引按 uid 分区——群里 28 个人就是 28 个分区，
+`vec0` 的每个分区按 chunk 预分配，默认 `chunk_size=1024` 条向量；1024 维 float32 下
+**每条 4KB，一个 chunk 就是 4MB**。而索引按 `uid` 分区——群里 28 个人就是 28 个分区，
 **112MB 纯预占**，跟她记了多少完全无关。
 
-修法是建表时显式给 chunk_size（默认 64，可用 DIGITAL_LIFE_VEC_CHUNK 调），
-打开旧库时如果发现 chunk_size 不对会自动重建并回填：
+修法是建表时显式给 `chunk_size`（默认 64，可用 `DIGITAL_LIFE_VEC_CHUNK` 调），
+打开旧库时如果发现 `chunk_size` 不对会自动重建并回填：
 
 | | 改前 | 改后 |
 |---|---|---|
@@ -314,8 +294,31 @@ Obsidian 那边由 ObsidianReflector 写三样东西：反思/YYYY-MM-DD.md、�
 | 每个用户预占 | ~4 MB | ~256 KB |
 | 孤儿 FTS / 向量行 | 24 / 24 | 0 / 0 |
 
-顺带确认：删除记忆要走 MemoryStore.delete()（会同步清 FTS 与向量），
-直接 DELETE FROM memories 会留下孤儿索引——这次那 24 条孤儿就是手工删仿真数据留下的。
+顺带确认：删除记忆要走 `MemoryStore.delete()`（会同步清 FTS 与向量），
+直接 `DELETE FROM memories` 会留下孤儿索引——这次那 24 条孤儿就是手工删仿真数据留下的。
+
+### 4.3 存储在哪：SQLite 是本体，Obsidian 是镜子
+
+容易被误会成“记忆存在 Obsidian 里”，其实是两套东西：
+
+| 存哪 | 存什么 | 谁读写 |
+|---|---|---|
+| `data/memory.db` | 七层记忆正文、FTS5 全文索引、vec0 向量索引 | 运行时**唯一真源**，每次开口都从这里召回 |
+| `data/state.db` | PAD、驱力、关系、人格（单行快照） | 同上，重启后靠它恢复 |
+| `<vault>/数字生命/` | 反思日记、自我叙事、关系图谱（.md） | **只写不读**，给人看的 |
+
+Obsidian 那边由 `ObsidianReflector` 写三样：`反思/YYYY-MM-DD.md`、`自我叙事.md`、`关系图谱.md`。
+它不是运行时数据源——删掉整个 vault，她照样记得你，只是没有可翻的日记。
+
+**默认关闭**：不给 `--vault` / `DIGITAL_LIFE_VAULT` 时 `reflector=None`，一行都不会写进笔记库。
+要日记时显式加 `--vault "<你的仓库>"`，它只会在仓库里建一个 `数字生命/` 子目录，
+不会碰你原有的笔记。默认不写是有意的：运行期产物落到笔记库会把库弄脏，也没法跟着代码回滚。
+
+> 踩过的坑：给 `sim` 子命令用 `set_defaults(data_dir=...)` 换默认目录是**错的**——
+> argparse 的 `parents` 按引用共享 action，一改会把 `im`/`chat` 的默认目录一起带跑，
+> 结果机器人一直在读写 `data/sim/`，仿真里的假用户 `u:warm` 被当成真人去主动搭话。
+> 现在改为在 `cmd_sim` 里判断，并加了一行启动日志打印实际使用的 state 路径。
+
 ---
 
 ## 5. 调参表（代码中的名字与文档一致）
