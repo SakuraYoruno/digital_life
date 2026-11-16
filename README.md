@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 136 个单元/集成测试
+├── tests/                    # 139 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -254,6 +254,28 @@ digital_life/
 11. **文档未要求的运行期字段**：`Relation` 增加了 `last_proactive_at / proactive_backoff / proactive_awaiting_reply`、`session` 统计、`UserProfile`。它们只服务冷却、会话结算和用户模型，不改变情绪数学。
 12. **长期冷落降温**：`§12.2` 只描述了方向、没给公式；实现为闲置超过 3 天后 `affinity` 每天 `-0.01`，会话结束的 ±0.05 仍是主要变化源，避免短期沉默把关系扣光。
 13. **Qwen3 thinking**：Qwen3 默认把正文放在 `reasoning`、`content` 为空；`llm.py` 检测到 `qwen3` 时自动传 `reasoning_effort="none"`，并在 content 为空时用 reasoning 兜底。小模型因此能稳定返回 appraisal JSON，大模型也不会只吐思考过程。
+
+### 4.1 情绪动力学的三处结构性修正
+
+实测发现原实现里 **三个情绪永远不可能出现**，根因不是参数，是公式：
+
+1. **A 的驱动量选错**：`target_A` 原来只用 `mean(|gap|)`（累积偏离），四个驱力全打满也只有 0.40 →
+   `target_A` 上限 **0.64**；而 烦躁/焦虑/兴奋 的锚点是 0.75/0.80/0.90，**数学上不可达**。
+   现在加了事件强度通道：`w_A_impulse × clamp(intensity − 0.25, −0.5, 0.75)`，
+   一句话多重就能立刻顶上去，敷衍的话反而会压一点 A（低唤醒状态才出得来）。
+
+2. **滞回阈值大于锚点间距**：`hysteresis=0.12`，而最近的锚点对（平静-无聊 0.062、开心-兴奋 0.110）
+   全比它小——**进了某个 mood 就再也切不到邻居**，8 个情绪实际只剩 3 个。改为 0.03。
+
+3. **回中心是固定点**：`decay_tick` 永远把 PAD 拉回 `P0/A0/D0`，所以被冷落再久也不会无聊/低落。
+   改为 `idle_target()`：回落点随"驱力亏空"下移（`P0−0.35·deficit` 等），
+   放置两小时后会自然落到 **无聊**；同时把 λ 从 `1e-6` 提到 `1e-3` 量级（半衰期约 2 小时），
+   否则驱力只进不出（注入/流失比 566:1），几天后全贴在天花板上，情绪维度永久失去信息量。
+
+改完后 7 日仿真里出现了 `无聊/委屈/焦虑/平静` 四种情绪，`p_std` 从 0.10 升到 0.12。
+
+> 注意：`sim` 现在默认写 `data/sim/`，不要和线上 `im` 共用 `data/`——否则仿真里的
+> `u:warm` 这类假用户会被写进真实状态，机器人会去给不存在的人发主动消息。
 
 ---
 
@@ -523,7 +545,7 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 ```bash
 python -m pytest
-# 136 passed
+# 139 passed
 ```
 
 覆盖：

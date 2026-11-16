@@ -9,7 +9,7 @@ import copy
 import random
 import time
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, ClassVar
 
 from .constants import MOODS, clamp
 
@@ -202,16 +202,21 @@ class PlasticPersona:
     steepness: float = 8.0
     w_A_threat: float = 0.5
     w_A_change: float = 0.6
+    # 这一下的强度直接抬 A：只靠"累积缺口"的话，A 的天花板是
+    # A0 + w_A_change×0.40 ≈ 0.64，而 烦躁/焦虑/兴奋 的锚点是 0.75/0.80/0.90，
+    # 那三个情绪就永远出不来。impulse_floor 以下的强度不算"激动"。
+    w_A_impulse: float = 0.55
+    impulse_floor: float = 0.25
     w_D: float = 0.4
     lam: dict[str, float] = field(
         default_factory=lambda: {
-            "bond": 2e-6,
-            "approval": 1.5e-6,
-            "curiosity": 3e-6,
-            "coherence": 1e-6,
+            "bond": 0.006,
+            "approval": 0.004,
+            "curiosity": 0.008,
+            "coherence": 0.003,
         }
     )
-    alpha_idle: float = 1.5e-5
+    alpha_idle: float = 0.002
     sens: dict[str, float] = field(
         default_factory=lambda: {
             "bond": 1.0,
@@ -236,6 +241,33 @@ class PlasticPersona:
         }
     )
     version: int = 0
+
+    # 这些是"物理常数"：改它们是在改模型本身，不该被旧快照锁住。
+    # 其余字段（P0/A0/D0、四个驱力基线、style_traits）是慢变层，会被养成改掉。
+    CONST_FIELDS: ClassVar[tuple[str, ...]] = (
+        "rho_P",
+        "rho_A",
+        "rho_D",
+        "k_P",
+        "k_A",
+        "k_D",
+        "guard_line",
+        "steepness",
+        "w_A_threat",
+        "w_A_change",
+        "w_A_impulse",
+        "impulse_floor",
+        "w_D",
+        "lam",
+        "alpha_idle",
+        "sens",
+        "wP",
+    )
+
+    def adopt_constants(self, source: "PlasticPersona") -> None:
+        """用代码里的常数覆盖快照里的常数，保留养成出来的部分。"""
+        for name in self.CONST_FIELDS:
+            setattr(self, name, copy.deepcopy(getattr(source, name)))
 
     def __post_init__(self) -> None:
         # 文档 §12.6：黏人度总旋钮有硬上限，防止被调成病态。
@@ -524,8 +556,14 @@ MOOD_ANCHORS: dict[str, tuple[float, float, float]] = {
 }
 
 
-def map_mood(st: LifeState, hysteresis: float = 0.12) -> str:
-    """最近质心 + 滞回，避免情绪词在边界抖动。"""
+def map_mood(st: LifeState, hysteresis: float = 0.03) -> str:
+    """最近质心 + 滞回，避免情绪词在边界抖动。
+
+    滞回阈值必须小于"相邻锚点的间距"，否则换不过去：
+    最近的锚点对是 平静-无聊(0.062)、开心-兴奋(0.110)，原来取 0.12，
+    比所有相邻间距都大——一旦进了某个 mood 就再也不会切换到邻居，
+    等于把 8 个情绪压缩成 3 个。这里取 0.03，约为最小间距的一半。
+    """
     current = (st.P, st.A, st.D)
 
     def dist(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:

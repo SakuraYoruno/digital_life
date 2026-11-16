@@ -457,7 +457,10 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--days", type=int, default=7)
     sim.add_argument("--strict", action="store_true", help="断言失败时返回非零")
     sim.add_argument("--verbose", action="store_true")
-    sim.set_defaults(func=cmd_sim)
+    # 仿真默认写自己的目录：和 im 共用 data/ 会把假用户的关系灌进线上状态。
+    sim.set_defaults(
+        func=cmd_sim, data_dir=os.getenv("DIGITAL_LIFE_SIM_DIR") or "data/sim"
+    )
 
     demo = sub.add_parser("demo", parents=[common], help="一分钟演示")
     demo.set_defaults(func=cmd_demo)

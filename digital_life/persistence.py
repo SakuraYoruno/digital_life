@@ -75,6 +75,9 @@ class StateStore:
         state = state_from_dict(data)
         if persona is not None:
             state.core = persona.core
+            # 动力学常数也归代码管：λ、k、w 这些改了要立刻生效，
+            # 只有 P0/A0/D0、驱力基线、style_traits 这些"养成出来的"才从快照保留。
+            state.plastic.adopt_constants(persona.plastic)
         return state
 
     def updated_at(self) -> float | None:

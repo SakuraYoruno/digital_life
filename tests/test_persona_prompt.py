@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from digital_life.personas import (
     CorePersona,
     LifeState,
@@ -205,4 +207,23 @@ def test_load_without_persona_keeps_snapshot_core(tmp_path):
     reopened = StateStore(tmp_path / "state.db")
     loaded = reopened.load()
     assert loaded is not None and loaded.core.background == "旧人设"
+    reopened.close()
+
+
+def test_saved_state_takes_dynamics_constants_from_code(tmp_path):
+    """改动力学常数（λ/k/w）要立刻生效，别被旧快照锁住；养成值仍要保留。"""
+    from digital_life.persistence import StateStore
+
+    store = StateStore(tmp_path / "state.db")
+    old = xiami_state()
+    old.plastic.lam["bond"] = 1e-9   # 旧常数
+    old.plastic.P0 = 0.35            # 养成出来的值
+    store.save(old)
+    store.close()
+
+    reopened = StateStore(tmp_path / "state.db")
+    loaded = reopened.load(persona=xiami_state())
+    assert loaded is not None
+    assert loaded.plastic.lam["bond"] == pytest.approx(0.006)   # 用代码里的新常数
+    assert loaded.plastic.P0 == pytest.approx(0.35)             # 养成的值保留
     reopened.close()
