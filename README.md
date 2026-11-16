@@ -301,10 +301,19 @@ digital_life/
 
 容易被误会成“记忆存在 Obsidian 里”，其实是两套东西：
 
+运行期数据目录由 `DIGITAL_LIFE_DATA_DIR` 决定（不给就是项目下的 `data/`）。
+这台机器上指到了 **`D:\digital_life_data`**——记忆库与状态快照都在那儿，项目目录只留日志和启动脚本：
+
+```
+D:\digital_life_data\
+├── memory.db      记忆正文 + FTS5 + 向量索引
+└── state.db       PAD / 驱力 / 关系 / 人格快照
+```
+
 | 存哪 | 存什么 | 谁读写 |
 |---|---|---|
-| `data/memory.db` | 七层记忆正文、FTS5 全文索引、vec0 向量索引 | 运行时**唯一真源**，每次开口都从这里召回 |
-| `data/state.db` | PAD、驱力、关系、人格（单行快照） | 同上，重启后靠它恢复 |
+| `$DIGITAL_LIFE_DATA_DIR/memory.db` | 七层记忆正文、FTS5 全文索引、vec0 向量索引 | 运行时**唯一真源**，每次开口都从这里召回 |
+| `$DIGITAL_LIFE_DATA_DIR/state.db` | PAD、驱力、关系、人格（单行快照） | 同上，重启后靠它恢复 |
 | `<vault>/数字生命/` | 反思日记、自我叙事、关系图谱（.md） | **只写不读**，给人看的 |
 
 Obsidian 那边由 `ObsidianReflector` 写三样：`反思/YYYY-MM-DD.md`、`自我叙事.md`、`关系图谱.md`。
