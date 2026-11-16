@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 103 个单元/集成测试
+├── tests/                    # 109 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -423,13 +423,32 @@ python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --pr
 python -m pytest tests/test_onebot.py     # 内置假 OneBot 服务端，跑通"收 → 回`"整条链路
 ```
 
+### 8.5 怎么让她"像"（人格设定在哪里）
+
+光靠几句形容词，模型只会演一个礼貌的空壳——它需要**她是谁、认识谁、怎么说话、说话长什么样**。
+这些都在 `personas.py` 的 `CorePersona` 里，五个字段各管一件事：
+
+| 字段 | 作用 | 缺了会怎样 |
+|---|---|---|
+| `background` | 来历：身份、年龄、言灵、藏起来的真身 | 不知道自我介绍从何说起 |
+| `relationships` | 固定关系里她分别是什么态度 | 提到老朋友时毫无反应 |
+| `voice_rules` | 口头禅、句尾习惯、绝不做的事 | 「标准口头禅」用不出来 |
+| `speech_examples` | 3 句语气样例（对方说 → 她回） | 句长、节奏、笑意全靠模型自由发挥 |
+| `mood_behaviors` | 每种 mood 的状态词与行为提示 | 情绪变化只在数字里，不在话里 |
+
+两个经验教训写在代码注释里，也值得记住：
+
+1. **样例的触发器别用用户最可能问的话**。早先样例写了「对方：你是谁啊」，结果模型直接把样例整句背出来。
+   现在换成「在吃什么 / 你好笨啊」这类不会撞题的场景。
+2. **只写"有哪些口头禅"没用**，要写"什么时候用"（`voice_rules` 第三条就是「爱反问、爱卖关子」并给了例句方向）。
+
 ---
 
 ## 9. 测试
 
 ```bash
 python -m pytest
-# 103 passed
+# 109 passed
 ```
 
 覆盖：

@@ -69,9 +69,8 @@ def _make_embedder(args: argparse.Namespace, backend: str | None = None):
 async def cmd_chat(args: argparse.Namespace) -> int:
     data_dir, mem_path, state_path = _paths(args)
     store = StateStore(state_path, clock=time.time)
-    st = store.load()
-    if st is None:
-        st = default_state() if args.persona == "default" else xiami_state()
+    preset = default_state() if args.persona == "default" else xiami_state()
+    st = store.load(persona=preset) or preset
     small, big = llm_from_env(mock=args.mock, seed=args.seed)
     embedder = _make_embedder(args)
     mem = MemoryStore(mem_path, clock=time.time, embedder=embedder)
@@ -245,7 +244,8 @@ async def cmd_demo(args: argparse.Namespace) -> int:
 async def cmd_reflect(args: argparse.Namespace) -> int:
     data_dir, mem_path, state_path = _paths(args)
     store = StateStore(state_path, clock=time.time)
-    st = store.load()
+    preset = default_state() if args.persona == "default" else xiami_state()
+    st = store.load(persona=preset)
     if st is None:
         print("没有找到状态。先 chat / sim 跑一点数据。")
         return 1
@@ -304,9 +304,8 @@ async def cmd_im(args: argparse.Namespace) -> int:
 
     data_dir, mem_path, state_path = _paths(args)
     store = StateStore(state_path, clock=time.time)
-    st = store.load()
-    if st is None:
-        st = default_state() if args.persona == "default" else xiami_state()
+    preset = default_state() if args.persona == "default" else xiami_state()
+    st = store.load(persona=preset) or preset
     small, big = llm_from_env(mock=args.mock, seed=args.seed)
     embedder = _make_embedder(args)
     mem = MemoryStore(mem_path, clock=time.time, embedder=embedder)

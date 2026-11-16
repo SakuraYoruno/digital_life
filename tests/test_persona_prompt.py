@@ -99,6 +99,12 @@ def test_xiami_core_is_locked_identity():
     assert XIAMI_CORE.name == "夏弥"
     assert "不勒索" in XIAMI_CORE.values
     assert "在吗" in XIAMI_CORE.taboos
+    # 龙族设定还在：来历、关系、口头禅规则都得在，否则又会演成空壳
+    assert "耶梦加得" in XIAMI_CORE.background
+    assert "风王之瞳" in XIAMI_CORE.background
+    assert "楚子航" in XIAMI_CORE.relationships
+    assert any("你猜" in rule for rule in XIAMI_CORE.voice_rules)
+    assert len(XIAMI_CORE.speech_examples) >= 3
     assert set(XIAMI_CORE.mood_behaviors) == {
         "开心",
         "兴奋",
@@ -128,3 +134,48 @@ def test_user_model_text_is_lightweight():
     assert "暖暖" in text
     assert "家人" in text
     assert "龙卡" in text
+
+
+def test_persona_blocks_reach_the_prompt():
+    st = xiami_state()
+    rel = Relation()
+    prompt, _k = build_system_prompt(st, rel)
+    assert "耶梦加得" in prompt          # background
+    assert "楚子航" in prompt            # relationships
+    assert "你猜" in prompt              # voice_rules
+    assert "【和谁】" in prompt
+
+
+def test_saved_state_takes_core_from_code(tmp_path):
+    """旧快照里的人格不该盖掉代码里改过的人设。"""
+    from digital_life.persistence import StateStore
+
+    store = StateStore(tmp_path / "state.db")
+    old = xiami_state()
+    old.core.background = "旧人设：什么都不知道"
+    old.core.speech_examples = []
+    old.P = 0.42
+    store.save(old)
+    store.close()
+
+    reopened = StateStore(tmp_path / "state.db")
+    loaded = reopened.load(persona=xiami_state())
+    assert loaded is not None
+    assert "耶梦加得" in loaded.core.background   # 用代码里的新人格
+    assert abs(loaded.P - 0.42) < 1e-9            # 情绪状态照样持久化
+    reopened.close()
+
+
+def test_load_without_persona_keeps_snapshot_core(tmp_path):
+    from digital_life.persistence import StateStore
+
+    store = StateStore(tmp_path / "state.db")
+    old = xiami_state()
+    old.core.background = "旧人设"
+    store.save(old)
+    store.close()
+
+    reopened = StateStore(tmp_path / "state.db")
+    loaded = reopened.load()
+    assert loaded is not None and loaded.core.background == "旧人设"
+    reopened.close()

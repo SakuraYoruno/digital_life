@@ -55,7 +55,14 @@ class StateStore:
             )
             self._conn.commit()
 
-    def load(self) -> LifeState | None:
+    def load(self, persona: LifeState | None = None) -> LifeState | None:
+        """读回快照。
+
+        `core` 是"写死在代码里的人设"，不该被旧快照覆盖——否则改了
+        personas.py 里的夏弥，跑起来的还是上一次存下来的那个空壳。
+        所以调用方把当前预设传进来时，用预设的 core 覆盖快照里的 core，
+        只让 P/A/D、plastic、relations、self_narrative 这些"长出来"的部分持久化。
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT snapshot FROM life_state WHERE id=1"
@@ -65,7 +72,10 @@ class StateStore:
         data = safe_json(row["snapshot"], None)
         if not isinstance(data, dict):
             return None
-        return state_from_dict(data)
+        state = state_from_dict(data)
+        if persona is not None:
+            state.core = persona.core
+        return state
 
     def updated_at(self) -> float | None:
         with self._lock:
