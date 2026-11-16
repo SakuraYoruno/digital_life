@@ -197,7 +197,7 @@ digital_life/
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
 │   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
 │   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
-├── tests/                    # 147 个单元/集成测试
+├── tests/                    # 148 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -277,6 +277,25 @@ digital_life/
 > 注意：`sim` 现在默认写 `data/sim/`，不要和线上 `im` 共用 `data/`——否则仿真里的
 > `u:warm` 这类假用户会被写进真实状态，机器人会去给不存在的人发主动消息。
 
+### 4.2 记忆库的体积：vec0 的 chunk
+
+体检时发现 memory.db 长到 **40MB**，但里面只有 24 条记忆。根因不是数据，是索引预分配：
+
+`vec0` 的每个分区按 chunk 预分配，默认 chunk_size=1024 条向量；1024 维 float32 下
+**每条 4KB，一个 chunk 就是 4MB**。而索引按 uid 分区——群里 28 个人就是 28 个分区，
+**112MB 纯预占**，跟她记了多少完全无关。
+
+修法是建表时显式给 chunk_size（默认 64，可用 DIGITAL_LIFE_VEC_CHUNK 调），
+打开旧库时如果发现 chunk_size 不对会自动重建并回填：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 24 条记忆的库 | 40.35 MB | **1.70 MB** |
+| 每个用户预占 | ~4 MB | ~256 KB |
+| 孤儿 FTS / 向量行 | 24 / 24 | 0 / 0 |
+
+顺带确认：删除记忆要走 MemoryStore.delete()（会同步清 FTS 与向量），
+直接 DELETE FROM memories 会留下孤儿索引——这次那 24 条孤儿就是手工删仿真数据留下的。
 ---
 
 ## 5. 调参表（代码中的名字与文档一致）
@@ -552,7 +571,7 @@ python -m digital_life im --stickers "D:\DSH-QQ\表情包" --sticker-prob 0.2 --
 
 ```bash
 python -m pytest
-# 147 passed
+# 148 passed
 ```
 
 覆盖：

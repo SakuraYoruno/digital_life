@@ -294,3 +294,20 @@ def test_same_dim_embedder_switch_rebuilds_vectors(tmp_path):
         mem2.close()
 
     asyncio.run(run())
+
+
+def test_vec_table_uses_small_chunks(tmp_path):
+    """vec0 默认 chunk=1024 条向量（1024 维下 4MB/人），必须显式调小。"""
+    from digital_life.memory import MemoryStore
+
+    store = MemoryStore(tmp_path / "m.db", embedder=lambda text: [0.1] * 8, embedding_dim=8)
+    try:
+        if not store._vec_ready:
+            return  # 没装 sqlite-vec 就跳过
+        sql = store._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='vec_memories'"
+        ).fetchone()[0]
+        assert "chunk_size" in sql
+        assert store.vec_chunk_size <= 128
+    finally:
+        store.close()

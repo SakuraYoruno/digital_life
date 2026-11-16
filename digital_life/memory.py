@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import struct
@@ -406,6 +407,9 @@ class MemoryStore:
         )
         if self.embedding_dim <= 0:
             raise ValueError("embedding_dim must be positive")
+        # vec0 每个分区按 chunk 预分配：默认 chunk=1024 条向量，1024 维下就是
+        # 4MB／人（群聊里 28 个人 = 112MB 的纯预占）。64 条够用，还能省 16 倍。
+        self.vec_chunk_size = max(8, int(os.getenv("DIGITAL_LIFE_VEC_CHUNK", "64")))
 
         def _normalized(text: str) -> list[float]:
             vec = [float(x) for x in raw_embedder(text)]
@@ -468,6 +472,7 @@ class MemoryStore:
             sqlite_vec.load(self._conn)
 
             old_dim: int | None = None
+            old_chunk: int | None = None
             table = self._conn.execute(
                 "SELECT sql FROM sqlite_master WHERE name='vec_memories'"
             ).fetchone()
@@ -475,6 +480,9 @@ class MemoryStore:
                 match = re.search(r"float\[(\d+)\]", str(table["sql"]))
                 if match:
                     old_dim = int(match.group(1))
+                chunk = re.search(r"chunk_size\s*=\s*(\d+)", str(table["sql"]))
+                if chunk:
+                    old_chunk = int(chunk.group(1))
             meta = self._conn.execute(
                 "SELECT value FROM kv WHERE key='vec_embedder'"
             ).fetchone()
@@ -488,10 +496,15 @@ class MemoryStore:
                 old_dim = None
             if table is not None and old_dim is None:
                 self._conn.execute("DROP TABLE IF EXISTS vec_memories")
+            elif table is not None and old_chunk != self.vec_chunk_size:
+                # 老表用的是 vec0 默认 chunk（1024 条向量 = 4MB/分区）。
+                # 群里人一多，每人 4MB 就是纯浪费，这里按需重建。
+                self._conn.execute("DROP TABLE vec_memories")
 
             self._conn.execute(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories "
-                f"USING vec0(uid TEXT PARTITION KEY, embedding float[{self.embedding_dim}])"
+                f"USING vec0(uid TEXT PARTITION KEY, embedding float[{self.embedding_dim}], "
+                f"chunk_size={self.vec_chunk_size})"
             )
             self._conn.execute(
                 "INSERT INTO kv(key,value,updated_at) VALUES ('vec_dim',?,0) "
