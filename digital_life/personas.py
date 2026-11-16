@@ -579,12 +579,15 @@ def inner_monologue(st: LifeState) -> str:
         intensity = ""
 
     base = behavior.state_desc
-    # 文档里的 state_desc 自带“有点”，避免叠成“很有有点蔫”。
-    if base.startswith("有点"):
-        if intensity == "很":
-            base = base[2:]
-        elif intensity == "有点":
-            intensity = ""
+    # state_desc 自己可能已经带了"有点""很"（比如"有点蔫""很来劲"）。
+    # 先把自带的那层剥掉，再用 P 算出来的副词统一加一次，避免"很很来劲"。
+    for prefix in ("有点", "很"):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+    # "心情不错""状态平平""委屈但绷着"这类是短语，前面再加副词读不通。
+    if base.startswith(("心情", "状态")) or "但" in base:
+        intensity = ""
 
     d_note = ""
     if d > 0.4:

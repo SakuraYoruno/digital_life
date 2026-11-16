@@ -36,16 +36,29 @@ def test_mood_hysteresis_prevents_jitter():
 
 def test_inner_monologue_intensity_and_dominance():
     st = xiami_state()
-    st.mood = "开心"
+    st.mood = "兴奋"          # 用能接副词的 state_desc（"来劲"）
     st.P, st.D = 0.8, 0.5
     text = inner_monologue(st)
-    assert "很" in text
+    assert "很来劲" in text
     assert "想带节奏" in text
 
     st.P, st.D = 0.3, -0.5
     text = inner_monologue(st)
-    assert "有点" in text
+    assert "有点来劲" in text
     assert "有点缩着" in text
+
+
+def test_inner_monologue_skips_adverb_for_phrases():
+    """「心情不错」「状态平平」「委屈但绷着」是短语，前面加副词读不通。"""
+    st = xiami_state()
+    for mood, p in (("开心", 0.9), ("平静", 0.9), ("委屈", -0.9)):
+        st.mood = mood
+        st.P, st.D = p, 0.0
+        text = inner_monologue(st).split("\n")[0]
+        assert "很心情" not in text
+        assert "很状态" not in text
+        assert "很委屈但" not in text
+        assert "有点心情" not in text
 
 
 def test_inner_monologue_does_not_double_prefix():
