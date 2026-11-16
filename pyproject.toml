@@ -17,6 +17,7 @@ dependencies = []
 openai = ["openai>=1.0"]
 vector = ["sqlite-vec>=0.1.9"]
 ollama = ["httpx>=0.24", "sqlite-vec>=0.1.9"]
+im = ["websockets>=12.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

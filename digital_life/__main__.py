@@ -4,12 +4,14 @@
     python -m digital_life sim --days 7 --seed 42 --strict
     python -m digital_life demo
     python -m digital_life reflect --gc
+    python -m digital_life im --self-id 123456
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import random
@@ -23,6 +25,7 @@ from .engine import DigitalLife, EngineConfig
 from .io import CollectingIO, ConsoleIO
 from .llm import llm_from_env
 from .memory import MemoryStore
+from .onebot import OneBotBridge, OneBotClient, OneBotIO, config_from_env
 from .persona_evolution import memory_gc, nightly_reflect
 from .persistence import ObsidianReflector, StateStore
 from .personas import default_state, xiami_state
@@ -282,6 +285,109 @@ async def cmd_gc(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# im（OneBot 11 / QQ）
+# ---------------------------------------------------------------------------
+
+
+def _csv(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(part for part in value.replace(";", ",").replace(",", " ").split() if part)
+
+
+async def cmd_im(args: argparse.Namespace) -> int:
+    try:
+        import websockets  # noqa: F401  可选依赖，先探一下
+    except ImportError:
+        print('接入 QQ 需要 websockets：pip install -e ".[im]"  或  pip install websockets')
+        return 1
+
+    data_dir, mem_path, state_path = _paths(args)
+    store = StateStore(state_path, clock=time.time)
+    st = store.load()
+    if st is None:
+        st = default_state() if args.persona == "default" else xiami_state()
+    small, big = llm_from_env(mock=args.mock, seed=args.seed)
+    embedder = _make_embedder(args)
+    mem = MemoryStore(mem_path, clock=time.time, embedder=embedder)
+    reflector = _reflector(args)
+
+    config = config_from_env()
+    if args.ws:
+        config.ws_url = args.ws
+    if args.token:
+        config.access_token = args.token
+    if args.self_id:
+        config.self_id = args.self_id
+    if args.private_mode:
+        config.private_mode = args.private_mode
+    if args.private_allow is not None:
+        config.private_allow = _csv(args.private_allow)
+    if args.group_mode:
+        config.group_mode = args.group_mode
+    if args.group_allow is not None:
+        config.group_allow = _csv(args.group_allow)
+
+    client = OneBotClient(config)
+    io = OneBotIO(client, config)
+    engine = DigitalLife(
+        st,
+        small,
+        big,
+        mem,
+        io,
+        state_store=store,
+        config=EngineConfig(
+            clock=time.time,
+            rng=None,
+            vault_path=str(reflector.vault) if reflector else None,
+            search_fn=None,
+            tick_seconds=config.tick_seconds,
+        ),
+        reflector=reflector,
+    )
+    bridge = OneBotBridge(engine, config)
+    client.on_message = bridge.dispatch
+
+    me = config.self_id or "（等 NapCat 报上来）"
+    print(f"—— 数字生命 · {st.core.name} · QQ 通道 ——")
+    print(f"机器人 QQ：{me}")
+    print(f"OneBot WS：{config.ws_url}")
+    print(
+        f"私聊：{config.private_mode}"
+        + (f"（白名单 {', '.join(config.private_allow) or '空'}）" if config.private_mode == "allowlist" else "")
+    )
+    print(
+        f"群聊：{config.group_mode}"
+        + (f"（限定 {', '.join(config.group_allow)}）" if config.group_allow else "")
+    )
+    print(
+        f"对话模型：{getattr(big, 'model', type(big).__name__)} / "
+        f"小模型：{getattr(small, 'model', type(small).__name__)}"
+    )
+    print(f"记忆向量后端：{mem.vector_backend}")
+    print("Ctrl+C 退出；退出前会把状态落盘。\n")
+
+    ticker = asyncio.create_task(engine.run())
+    try:
+        await client.run()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        engine.stop()
+        ticker.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await ticker
+        await bridge.drain()
+        await client.close()
+        await engine.close()
+        if embedder is not None:
+            embedder.close()
+    print(f"状态已保存到 {state_path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
 
@@ -332,6 +438,22 @@ def build_parser() -> argparse.ArgumentParser:
     gc = sub.add_parser("gc", parents=[common], help="对某个用户做记忆治理")
     gc.add_argument("--uid", required=True)
     gc.set_defaults(func=cmd_gc)
+
+    im = sub.add_parser("im", parents=[common], help="接入 QQ（OneBot 11 / NapCat）")
+    im.add_argument("--ws", default=None, help="OneBot 正向 WS 地址，默认 ws://127.0.0.1:3001")
+    im.add_argument("--token", default=None, help="OneBot access_token")
+    im.add_argument("--self-id", default=None, help="机器人自己的 QQ 号")
+    im.add_argument(
+        "--private-mode", choices=("off", "allowlist", "open"), default=None,
+        help="私聊策略：off 不接 / allowlist 只接白名单 / open 谁都接",
+    )
+    im.add_argument("--private-allow", default=None, help="私聊白名单，逗号分隔的 QQ 号")
+    im.add_argument(
+        "--group-mode", choices=("off", "mention", "open"), default=None,
+        help="群聊策略：off 不接 / mention 被 @ 或带前缀才接 / open 群里什么都接",
+    )
+    im.add_argument("--group-allow", default=None, help="群白名单，逗号分隔的群号，留空=不限制")
+    im.set_defaults(func=cmd_im)
     return parser
 
 

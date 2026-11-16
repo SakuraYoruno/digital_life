@@ -195,8 +195,9 @@ digital_life/
 │   ├── simulation.py         # 多画像多日仿真 + 断言
 │   ├── llm.py                # OpenAI 兼容客户端 + 离线 MockLLM
 │   ├── io.py                 # 出站气泡切分、控制台/收集型 IO
-│   └── __main__.py           # CLI：chat / sim / demo / reflect / gc
-├── tests/                    # 85 个单元/集成测试
+│   ├── onebot.py             # OneBot 11 适配器：QQ 收发、群/私聊过滤、气泡发送
+│   └── __main__.py           # CLI：chat / sim / demo / reflect / gc / im
+├── tests/                    # 103 个单元/集成测试
 ├── scripts/demo.py           # demo 便捷入口
 ├── scripts/simulate.py       # sim 便捷入口
 ├── data/                     # 运行期 SQLite（已 gitignore）
@@ -364,11 +365,70 @@ await nightly_reflect(
 
 ---
 
-## 8. 测试
+## 8. 接入 QQ（OneBot 11 / NapCat）
+
+`io.OutboundIO` 的 QQ 实现，链路和 NapCat 的标准用法完全一致：
+
+```
+QQ 账号 → QQNT → NapCat → OneBot 11 正向 WebSocket
+         → digital_life.onebot（本进程作为客户端连过去）
+         → DigitalLife.on_message
+         → send_group_msg / send_private_msg
+```
+
+### 8.1 一次性准备
+
+```bash
+# 1) NapCat 的 config/onebot11_<QQ号>.json 里开一个正向 WebSocket（默认 127.0.0.1:3001 + token）
+# 2) 装上唯一的新可选依赖
+pip install -e ".[im]"        # 只有 websockets
+```
+
+### 8.2 起一个通道
+
+```powershell
+set DIGITAL_LIFE_QQ_TOKEN=dsh-life-2026
+set DIGITAL_LIFE_QQ_SELF_ID=230749497
+
+python -m digital_life im --ws ws://127.0.0.1:3001 --private-mode allowlist --private-allow 你的QQ号
+```
+
+| 参数 | 环境变量 | 默认 | 作用 |
+|---|---|---|---|
+| `--ws` | `DIGITAL_LIFE_QQ_WS` | `ws://127.0.0.1:3001` | OneBot 正向 WS 地址 |
+| `--token` | `DIGITAL_LIFE_QQ_TOKEN` | 空 | access_token |
+| `--self-id` | `DIGITAL_LIFE_QQ_SELF_ID` | 等 NapCat 上报 | 机器人 QQ 号，用来判断"有没有 @ 我" |
+| `--private-mode` | `DIGITAL_LIFE_QQ_PRIVATE_MODE` | `allowlist` | `off` / `allowlist` / `open` |
+| `--private-allow` | `DIGITAL_LIFE_QQ_PRIVATE_ALLOW` | 空 | 逗号分隔的 QQ 号 |
+| `--group-mode` | `DIGITAL_LIFE_QQ_GROUP_MODE` | `mention` | `off` / `mention` / `open` |
+| `--group-allow` | `DIGITAL_LIFE_QQ_GROUP_ALLOW` | 空 | 逗号分隔的群号；空=所有群 |
+| — | `DIGITAL_LIFE_QQ_PREFIX` | `/` | 群里不带 @ 也能触发的前缀，置空则只认 @ |
+| — | `DIGITAL_LIFE_QQ_BUBBLE_INTERVAL` | `0.6` | 多条气泡之间的间隔秒数 |
+| — | `DIGITAL_LIFE_QQ_TICK` | `60` | 慢循环（念头/主动发言）节拍 |
+
+### 8.3 行为约定
+
+- **私聊**：`allowlist` 只接白名单；`open` 谁都接（只建议在自己机器上、别人够不着时用）。
+- **群聊**：`mention` 只接"被 @ "或"以 `/` 开头"的消息，回复的第一条会 @ 回对方。
+- **一条回复几口气**：仍由 `io.split_bubbles` 按 A 维旋钮切气泡，逐条发，间隔 `bubble_interval` 秒。
+- **记忆按 QQ 号隔离**：`uid` 就是 QQ 号；群里说话同样记在这个人名下，`group_id` 只参与群语境。
+- **出站不串台**：私聊回复落到私聊、群回复落到同一个群，靠 `contextvars` 绑定当前这一轮，并发用户互不影响。
+- **主动发言**：慢循环里"她"想找人说话时走私聊；非 QQ 号的 uid（例如 chat 里的 `owner`）会被跳过并记日志，不会误发。
+- **断线**：1s→30s 指数退避自动重连；重连后 NapCat 重推的旧消息按 `message_id` 去重。
+
+### 8.4 不想连真号时
+
+```bash
+python -m pytest tests/test_onebot.py     # 内置假 OneBot 服务端，跑通"收 → 回`"整条链路
+```
+
+---
+
+## 9. 测试
 
 ```bash
 python -m pytest
-# 85 passed
+# 103 passed
 ```
 
 覆盖：
@@ -389,7 +449,7 @@ python -m pytest
 
 ---
 
-## 9. 已知边界
+## 10. 已知边界
 
 - **模型分工**：Qwen3 1.7B 只适合做 small（appraisal / 念头 / 摘要）。把它当 Big 实测会复读、
   答非所问、记不住称呼；不要用它承担主对话。
@@ -415,7 +475,7 @@ python -m pytest
 
   本项目只读取 `DIGITAL_LIFE_API_KEY` / `DIGITAL_LIFE_BASE_URL` 等标准环境变量；不依赖任何宿主，
   也不读取其他应用的账号凭证。
-- 没有内置 IM Bot 适配器；`io.OutboundIO` 是留给企微/TG/Discord/QQ 的接入口。
+- 内置的前端只有 QQ（OneBot 11）一个；`io.OutboundIO` 仍是通用接入口，企微 / TG / Discord 照 `onebot.py` 的形状实现一个 `send()` 即可。
 - `sqlite-vec` 是索引层，embedding 由 `embedding.py` 提供：默认 `bge-m3`（1024 维，显存约 689MB），Ollama 没启动时 `auto` 会安静回退内置哈希，不会阻塞启动。Ollama 默认 `keep_alive=5m`，空闲后自动卸载，不是永久常驻；可用 `DIGITAL_LIFE_EMBED_KEEP_ALIVE` 调整，用 `ollama ps` 查看当前驻留模型。
 - `MockLLM` 是规则驱动的测试替身，不是人设模型；它的输出只用于验证链路，不代表最终“像人”的效果。
 - 仿真中的 `p_std` 与用户消息密度相关：`rho_P=0.03/60s` 让愉悦度回归很快，消息稀疏时 P 会长时间贴着基线，标准差自然变小；如果你要更强的情绪起伏，优先调 `k_P` / `wP`，而不是改断言。
