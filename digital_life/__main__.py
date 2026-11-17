@@ -32,6 +32,7 @@ from .persistence import ObsidianReflector, StateStore
 from .personas import default_state, xiami_state
 from .simulation import FakeClock, run_simulation
 from .view import export_map
+from .view_webgl import export_webgl_map
 from .vision import ImageDescriber
 from .websearch import make_search_fn
 
@@ -521,9 +522,21 @@ async def cmd_kb(args: argparse.Namespace) -> int:
 async def cmd_view(args: argparse.Namespace) -> int:
     data_dir, mem_path, state_path = _paths(args)
     out = Path(args.out) if args.out else Path(data_dir) / "memory-map.html"
-    path = export_map(mem_path, state_path, out)
+    engine = (args.engine or "webgl").lower()
+    path = None
+    if engine == "webgl":
+        try:
+            path = export_webgl_map(
+                mem_path, state_path, out, cache_dir=Path(data_dir) / "_libs"
+            )
+            print("渲染：three.js + Bloom（单文件，依赖已内联）")
+        except Exception as exc:  # noqa: BLE001 - 没网/没缓存时回退
+            print(f"（WebGL 版生成失败，回退 canvas：{type(exc).__name__}: {exc}）")
+    if path is None:
+        path = export_map(mem_path, state_path, out)
+        print("渲染：canvas 2D（降级版）")
     print(f"记忆星图已生成：{path}")
-    print("双击就能看：拖拽旋转、滚轮俯仰、悬停看记忆正文。")
+    print("双击就能看：拖拽旋转、滚轮缩放、悬停看记忆正文。")
     return 0
 
 
@@ -619,6 +632,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     view = sub.add_parser("view", parents=[common], help="生成记忆星图（单文件 HTML）")
     view.add_argument("--out", default=None, help="输出路径，默认 <data_dir>/memory-map.html")
+    view.add_argument("--engine", choices=("webgl", "canvas"), default="webgl",
+                      help="webgl=three.js+Bloom（推荐）；canvas=无依赖降级版")
     view.set_defaults(func=cmd_view)
 
     kb = sub.add_parser("kb", parents=[common], help="把 Markdown 资料导入知识层")

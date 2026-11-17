@@ -66,3 +66,22 @@ def test_empty_memory_still_renders(tmp_path):
     assert payload["nodes"] == []
     html = render_html(payload)
     assert "还没有记忆" in html
+
+
+def test_webgl_render_inlines_libs(tmp_path):
+    """WebGL 版把 three.js 等库内联进单文件，生成时不需要联网（用假库文件代替）。"""
+    from digital_life.view_webgl import render_webgl_html
+
+    cache = tmp_path / "libs"
+    cache.mkdir()
+    for name in ("three.min.js", "CopyShader.js", "LuminosityHighPassShader.js",
+                 "EffectComposer.js", "RenderPass.js", "ShaderPass.js",
+                 "UnrealBloomPass.js"):
+        (cache / name).write_text(f"/* {name} stub */\n" + "x" * 400, encoding="utf-8")
+
+    payload = {"core": {"pad": "0/0/0", "mood": "平静", "color": "1,2,3"},
+               "nodes": [], "rings": []}
+    html = render_webgl_html(payload, cache_dir=cache)
+    assert "three.min.js stub" in html
+    assert "UnrealBloomPass.js stub" in html
+    assert "__LIBS__" not in html and "__DATA__" not in html

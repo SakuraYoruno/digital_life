@@ -358,20 +358,20 @@ D:\note\digital life\知识库
 
 ### 4.5 记忆星图（`view`）
 
-记忆只存在库里的话，除了翻日志没别的看头。`view` 把它渲染成一张可交互的星图：
-
 ```powershell
-python -m digital_life view          # 生成 <data_dir>/memory-map.html
+python -m digital_life view                 # 默认 WebGL 版
+python -m digital_life view --engine canvas # 无依赖降级版
 ```
 
-- 单文件 HTML（约 20KB），**不联网、不起服务**，双击就能看
-- 每条记忆一颗星：位置由 embedding 的 PCA 三维投影决定（长相近的会聚成星座），
-  大小/亮度是 importance，颜色是"属于谁"
-- 中心那颗是"她"，颜色跟着 P（愉悦度）冷暖变化，右上角显示当前 mood
-- 拖拽旋转、滚轮俯仰、悬停看正文；同一个人（同 uid）的星会连成一线
+**WebGL 版**（three.js r128 + UnrealBloomPass）：莫比乌斯环上铺 3.4 万颗粒子，
+配合 Bloom 后处理做体积光；记忆结点钉在环带上（角度由 embedding 前两维决定），
+中心"她"带四向光束、颜色随 P 冷暖。拖拽绕轨、滚轮缩放、悬停看正文。
 
-真实数据跑出来的样子：三个人 11 条记忆分成三簇，`知识` 那颗独立在外环。
+- 输出仍是**单文件 HTML**（约 630KB），three 的几个库在生成时下载并内联，打开时不联网
+- 库缓存在 `<data_dir>/_libs/`，第二次生成不再下载
+- 下载失败自动回退到 canvas 2D 版（约 17KB，画面朴素但没有依赖）
 
+**canvas 降级版**：环带 + 粒子 + 假辉光，用于没有 WebGL 或没网的环境。
 
 ---
 
