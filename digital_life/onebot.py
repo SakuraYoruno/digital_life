@@ -344,6 +344,8 @@ class OneBotClient:
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._write_lock = asyncio.Lock()
         self._connected = asyncio.Event()
+        self.friends: set[str] | None = None
+        self._logged: set[str] = set()
         self._closed = False
         self._seen: deque[str] = deque(maxlen=200)
 
@@ -400,6 +402,33 @@ class OneBotClient:
                 self._connected.clear()
                 self._ws = None
                 self._fail_pending("连接已断开")
+
+    async def ensure_friends(self) -> set[str] | None:
+        """懒加载好友列表：群成员不是好友，主动私聊会 1200 失败。
+
+        只在真的要主动私聊时才拉一次（连上就拉会打扰测试里的假服务端，
+        而且大多数轮次用不到）。
+        """
+        if self.friends is not None:
+            return self.friends
+        try:
+            data = await self.call("get_friend_list", {}, timeout=10)
+            items = data.get("data") or []
+            self.friends = {
+                str(item.get("user_id"))
+                for item in items
+                if isinstance(item, dict) and item.get("user_id")
+            }
+            self.log(f"[onebot] 好友 {len(self.friends)} 人")
+        except Exception:
+            self.friends = None
+        return self.friends
+
+    def log_once(self, key: str, line: str) -> None:
+        if key in self._logged:
+            return
+        self._logged.add(key)
+        self.log(line)
 
     async def close(self) -> None:
         self._closed = True
@@ -527,6 +556,16 @@ class OneBotIO:
 
         target = _target.get()
         group_id = target[1] if target and target[0] == "group" else None
+        # 主动私聊（没有上下文目标）只发给好友：群成员不是好友，发了会 1200 报错。
+        if target is None and group_id is None:
+            ensure = getattr(self.client, "ensure_friends", None)
+            friends = await ensure() if callable(ensure) else None
+            if friends is not None and str(uid) not in friends:
+                self.client.log_once(
+                    f"nonfriend:{uid}",
+                    f"[onebot] 跳过非好友的主动私聊：{uid}（不在好友列表里）",
+                )
+                return
         if group_id is None and not str(uid).isdigit():
             # 主动发言时可能拿着 "owner"、"demo" 这类非 QQ 号的 uid，发不出去就记一笔。
             self.client.log(f"[onebot] 跳过非 QQ uid 的出站消息：{uid!r}")
