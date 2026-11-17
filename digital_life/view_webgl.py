@@ -154,8 +154,9 @@ function buildBand(count, size, opacity, spread, bright) {
 }
 
 const group = new THREE.Group();
-group.add(buildBand(90000, 0.0075, 0.55, 0.012, false));
-group.add(buildBand(14000, 0.014, 0.95, 0.008, true));
+group.add(buildBand(120000, 0.0038, 0.30, 0.020, false));
+group.add(buildBand(5200, 0.020, 0.85, 0.010, true));
+group.add(buildBand(1600, 0.034, 1.0, 0.030, true));
 group.rotation.x = 0.42;
 group.rotation.z = -0.30;
 // 压扁：样图是横向极扁的椭圆，带子几乎平行于画面上缘起伏
@@ -210,16 +211,16 @@ const core = new THREE.Sprite(new THREE.SpriteMaterial({
   map: glowTex(`rgba(${coreCol},1)`, `rgba(${coreCol},0.22)`),
   blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
 }));
-core.scale.set(0.95, 0.95, 1);
+core.scale.set(0.55, 0.55, 1);
 scene.add(core);
 
 const spikes = new THREE.Group();
 for (let i = 0; i < 6; i++) {
-  const a = i * Math.PI / 3 + 0.2, len = i % 2 ? 1.5 : 3.4;
+  const a = i * Math.PI / 3 + 0.2, len = i % 2 ? 3.0 : 5.6;
   const g = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(a) * len, Math.sin(a) * len, 0)]);
   spikes.add(new THREE.Line(g, new THREE.LineBasicMaterial({
-    color: 0xeaf4ff, transparent: true, opacity: i % 2 ? 0.22 : 0.5,
+    color: 0xeaf4ff, transparent: true, opacity: i % 2 ? 0.15 : 0.35,
     blending: THREE.AdditiveBlending, depthWrite: false })));
 }
 scene.add(spikes);
@@ -273,7 +274,7 @@ DATA.nodes.forEach((n) => {
 // —— 后处理：强泛光 ——
 const composer = new THREE.EffectComposer(renderer);
 composer.addPass(new THREE.RenderPass(scene, camera));
-const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(W(), H()), 1.45, 0.95, 0.08);
+const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(W(), H()), 0.9, 0.85, 0.30);
 composer.addPass(bloom);
 
 // —— 相机：斜穿构图 ——
@@ -382,7 +383,7 @@ const tmp = new THREE.Vector3();
 function tick() {
   const t = clock.getElapsedTime();
   if (auto) { group.rotation.y += 0.0009; orbits.rotation.y += 0.004; }
-  core.scale.setScalar(0.92 + 0.04 * Math.sin(t * 1.2));
+  core.scale.setScalar(0.54 + 0.03 * Math.sin(t * 1.2));
   spikes.rotation.z = t * 0.05;
   for (const it of nodes) {
     tmp.copy(it.world).project(camera);
