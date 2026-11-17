@@ -32,6 +32,7 @@ from .persistence import ObsidianReflector, StateStore
 from .personas import default_state, xiami_state
 from .simulation import FakeClock, run_simulation
 from .view import export_map
+from .view_svg import export_svg_map
 from .view_webgl import export_webgl_map
 from .vision import ImageDescriber
 from .websearch import make_search_fn
@@ -522,9 +523,12 @@ async def cmd_kb(args: argparse.Namespace) -> int:
 async def cmd_view(args: argparse.Namespace) -> int:
     data_dir, mem_path, state_path = _paths(args)
     out = Path(args.out) if args.out else Path(data_dir) / "memory-map.html"
-    engine = (args.engine or "webgl").lower()
+    engine = (args.engine or "svg").lower()
     path = None
-    if engine == "webgl":
+    if engine == "svg":
+        path = export_svg_map(mem_path, state_path, out)
+        print("渲染：SVG（精确描形，不做三维）")
+    elif engine == "webgl":
         try:
             path = export_webgl_map(
                 mem_path, state_path, out, cache_dir=Path(data_dir) / "_libs"
@@ -632,7 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     view = sub.add_parser("view", parents=[common], help="生成记忆星图（单文件 HTML）")
     view.add_argument("--out", default=None, help="输出路径，默认 <data_dir>/memory-map.html")
-    view.add_argument("--engine", choices=("webgl", "canvas"), default="webgl",
+    view.add_argument("--engine", choices=("svg", "webgl", "canvas"), default="svg",
                       help="webgl=three.js+Bloom（推荐）；canvas=无依赖降级版")
     view.set_defaults(func=cmd_view)
 

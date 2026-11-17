@@ -85,3 +85,20 @@ def test_webgl_render_inlines_libs(tmp_path):
     assert "three.min.js stub" in html
     assert "UnrealBloomPass.js stub" in html
     assert "__LIBS__" not in html and "__DATA__" not in html
+
+
+def test_svg_render_is_selfcontained(tmp_path):
+    """SVG 版：单文件、无外部资源，结点/面板/卡片都来自数据。"""
+    from digital_life.view_svg import render_svg_html
+
+    mem_path, state_path = _seed(tmp_path)
+    import digital_life.view_svg as vs
+
+    payload = vs._svg_payload(mem_path, state_path)
+    html = render_svg_html(payload)
+    assert "<svg" in html and "意识海" in html
+    assert "她说今天很热" in html
+    assert "__DATA__" not in html
+    # 只允许 SVG 命名空间；不应有外部 src/href
+    assert "src=\"http" not in html and "href=\"http" not in html
+    assert "www.w3.org/2000/svg" in html
