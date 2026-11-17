@@ -31,6 +31,7 @@ from .persona_evolution import memory_gc, nightly_reflect
 from .persistence import ObsidianReflector, StateStore
 from .personas import default_state, xiami_state
 from .simulation import FakeClock, run_simulation
+from .view import export_map
 from .vision import ImageDescriber
 from .websearch import make_search_fn
 
@@ -513,6 +514,20 @@ async def cmd_kb(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# view（记忆星图）
+# ---------------------------------------------------------------------------
+
+
+async def cmd_view(args: argparse.Namespace) -> int:
+    data_dir, mem_path, state_path = _paths(args)
+    out = Path(args.out) if args.out else Path(data_dir) / "memory-map.html"
+    path = export_map(mem_path, state_path, out)
+    print(f"记忆星图已生成：{path}")
+    print("双击就能看：拖拽旋转、滚轮俯仰、悬停看记忆正文。")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
 
@@ -601,6 +616,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="她一句话分两口气时并成一条发（默认按两条气泡发，更像真人）",
     )
     im.set_defaults(func=cmd_im)
+
+    view = sub.add_parser("view", parents=[common], help="生成记忆星图（单文件 HTML）")
+    view.add_argument("--out", default=None, help="输出路径，默认 <data_dir>/memory-map.html")
+    view.set_defaults(func=cmd_view)
 
     kb = sub.add_parser("kb", parents=[common], help="把 Markdown 资料导入知识层")
     kb.add_argument("--dir", required=True, help="一个 .md 文件或目录（递归找 *.md）")
