@@ -116,10 +116,10 @@ renderer.setClearColor(0x02030a, 1);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(48, W() / H(), 0.1, 200);
+const camera = new THREE.PerspectiveCamera(52, W() / H(), 0.1, 200);
 
 // —— 细亮带：环 + 轻微上下起伏，斜穿画面 ——
-const R = 1.30, WIDTH = 0.055;
+const R = 1.62, WIDTH = 0.055;
 function bandPoint(u, v) {
   const half = u / 2;
   const wobble = 0.16 * Math.sin(u * 2 + 0.6);
@@ -158,6 +158,9 @@ group.add(buildBand(90000, 0.0075, 0.55, 0.012, false));
 group.add(buildBand(14000, 0.014, 0.95, 0.008, true));
 group.rotation.x = 0.42;
 group.rotation.z = -0.30;
+// 压扁：样图是横向极扁的椭圆，带子几乎平行于画面上缘起伏
+group.scale.set(1.52, 0.30, 1.0);
+group.position.y = -0.04;
 scene.add(group);
 
 // —— 深空星野 ——
@@ -207,7 +210,7 @@ const core = new THREE.Sprite(new THREE.SpriteMaterial({
   map: glowTex(`rgba(${coreCol},1)`, `rgba(${coreCol},0.22)`),
   blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
 }));
-core.scale.set(1.25, 1.25, 1);
+core.scale.set(0.95, 0.95, 1);
 scene.add(core);
 
 const spikes = new THREE.Group();
@@ -274,7 +277,7 @@ const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(W(), H()), 1.45, 0.95,
 composer.addPass(bloom);
 
 // —— 相机：斜穿构图 ——
-let yaw = 0.55, pitch = 0.30, dist = 3.15, dragging = false, lx = 0, ly = 0, auto = true;
+let yaw = 0.42, pitch = 0.14, dist = 3.55, dragging = false, lx = 0, ly = 0, auto = true;
 function applyCamera() {
   camera.position.set(
     Math.sin(yaw) * Math.cos(pitch) * dist,
@@ -379,7 +382,7 @@ const tmp = new THREE.Vector3();
 function tick() {
   const t = clock.getElapsedTime();
   if (auto) { group.rotation.y += 0.0009; orbits.rotation.y += 0.004; }
-  core.scale.setScalar(1.18 + 0.05 * Math.sin(t * 1.2));
+  core.scale.setScalar(0.92 + 0.04 * Math.sin(t * 1.2));
   spikes.rotation.z = t * 0.05;
   for (const it of nodes) {
     tmp.copy(it.world).project(camera);
